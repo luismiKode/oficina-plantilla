@@ -120,8 +120,11 @@ export function abrirDB(ruta) {
 	// Solo POST /mensajes pone de_alex. Lo demás nace contaminado, salvo un recado de un turno limpio.
 	try { db.exec(`ALTER TABLE mensajes ADD COLUMN de_alex INTEGER NOT NULL DEFAULT 0`); } catch { /* ya está */ }
 	try { db.exec(`ALTER TABLE mensajes ADD COLUMN contaminado INTEGER NOT NULL DEFAULT 1`); } catch { /* ya está */ }
+	// Nota de voz: el audio ({nombre, ruta, tipo}) y por qué no se ha podido transcribir. Estados nuevos: transcribiendo | sin_transcribir.
+	try { db.exec(`ALTER TABLE mensajes ADD COLUMN audio TEXT`); } catch { /* ya está */ }
+	try { db.exec(`ALTER TABLE mensajes ADD COLUMN voz_error TEXT`); } catch { /* ya está */ }
 	fs.chmodSync(ruta, 0o600);
-	const q = (sql, ...a) => db.prepare(sql).all(...a);
+	const q =(sql, ...a) => db.prepare(sql).all(...a);
 	const uno = (sql, ...a) => db.prepare(sql).get(...a);
 	const run = (sql, ...a) => {
 		const r = db.prepare(sql).run(...a);

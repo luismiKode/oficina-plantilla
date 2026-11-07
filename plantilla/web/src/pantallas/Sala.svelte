@@ -9,7 +9,7 @@
 	let persona = $state(null), mensajes = $state([]), vivo = $state(null), reloj = $state(Date.now()), abierto = $state(null);
 	let texto = $state(''), archivos = $state([]), error = $state(''), enviando = $state(false), mas = $state(false);
 	let abajo;
-	const COLA = { ocupado: 'Termina lo que tiene entre manos y te contesta', espera: 'En cola: el resto de la oficina está ocupado' };
+	const COLA = { ocupado: 'Termina lo que tiene entre manos y te contesta', espera: 'En cola: el resto de la oficina está ocupado', nota: 'Va después de tu audio' };
 	const baja = async () => { await tick(); abajo?.scrollIntoView({ block: 'end' }); };
 	const tiempo = s => (s < 60 ? `${s} s` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
 	const segundos = $derived(vivo?.desde ? Math.max(0, Math.round((reloj - vivo.desde) / 1000)) : 0);
@@ -53,6 +53,11 @@
 	}
 	// Enter envía con teclado físico. Con el de pantalla, es un salto de línea.
 	const tecla = e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && tecladoFisico()) envia(e); };
+	async function reintenta(m) {
+		error = '';
+		try { await manda(`/api/salas/${encodeURIComponent(hilo)}/mensajes/${m.id}/reintentar`); await carga(); }
+		catch (e) { error = e.message; }
+	}
 	async function nueva() {
 		await manda(`/api/salas/${encodeURIComponent(hilo)}/nueva`);
 		mas = false;
@@ -88,6 +93,21 @@
 				{#if m.pasos?.pasos?.length > 1}
 					<button type="button" class="como" aria-expanded={abierto === m.id} onclick={() => (abierto = abierto === m.id ? null : m.id)}>{m.pasos.pasos.length - 1} {m.pasos.pasos.length === 2 ? 'paso' : 'pasos'}, {tiempo(Math.round(m.pasos.ms / 1000))}</button>
 					{#if abierto === m.id}<ol class="pasos">{#each m.pasos.pasos.slice(1) as p}<li>{p.texto}</li>{/each}</ol>{/if}
+				{/if}
+			{:else if m.audio}
+				<div class="mio voz">
+					<audio controls preload="metadata" src={`/api/salas/${encodeURIComponent(hilo)}/mensajes/${m.id}/audio`}></audio>
+					{#each m.adjuntos ?? [] as a}<p class="adj">{a}</p>{/each}
+				</div>
+				{#if m.estado === 'transcribiendo'}
+					<p class="bajo" role="status"><span class="latido" aria-hidden="true"></span>Transcribiendo</p>
+				{:else if m.estado === 'sin_transcribir'}
+					<div class="bajo fallo-voz">
+						<p>No he podido transcribirlo y no se lo he pasado: {m.voz_error}. El audio sigue aquí.</p>
+						<button type="button" class="boton texto" onclick={() => reintenta(m)}>Reintentar</button>
+					</div>
+				{:else if m.texto}
+					<details class="bajo plegado"><summary>Texto</summary>{@html formato(m.texto)}</details>
 				{/if}
 			{:else}
 				<div class="mio">{@html formato(m.texto)}{#each m.adjuntos ?? [] as a}<p class="adj">{a}</p>{/each}</div>
@@ -134,6 +154,12 @@
 	.suyo.fallo { background: #f2d3cf; }
 	.mio { background: var(--negro); color: var(--papel); align-self: flex-end; }
 	.adj { font-size: 14px; opacity: .8; }
+	.voz { width: min(300px, 86%); }
+	.voz audio { display: block; width: 100%; height: 40px; }
+	.bajo { align-self: flex-end; max-width: 86%; font-size: 14px; color: var(--apagado); overflow-wrap: anywhere; }
+	p.bajo { display: flex; align-items: center; gap: 7px; }
+	.plegado summary { cursor: pointer; text-align: right; min-height: 28px; }
+	.fallo-voz { background: #f2d3cf; color: var(--negro); border-radius: 12px; padding: 6px 12px; }
 	.hilo :global(p + p), .hilo :global(ul + p), .hilo :global(p + ul) { margin-top: .5em; }
 	.hilo :global(ul) { margin: 0; padding-left: 1.1em; }
 	.hilo :global(code) { font-family: var(--marca-font-numbers); background: rgba(25,25,25,.09); padding: 0 .25em; border-radius: 4px; }

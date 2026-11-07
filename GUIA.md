@@ -58,6 +58,10 @@ Lo más cómodo es abrir Claude Code en esta carpeta y decirle: «Lee GUIA.md y 
 
 **Se ve lo que hacen.** En el chat aparece en vivo lo que está haciendo cada uno, sacado de los eventos reales de Claude: «Buscando en el correo», «Leyendo ESTADO.md», «Preguntando a Vera». Si está en cola, lo dice. Al acabar queda plegado en «4 pasos, 38 s» (`server/actividad.mjs`).
 
+**Se mejora sola.** El de tecnología hace las mejoras de la propia oficina en una rama aparte. El servicio, no el modelo, pasa las pruebas, compila y arranca la versión nueva con datos falsos antes de ponerla en marcha, y si no va, la retira. Lo que toque permisos o controles pide tu sí (`server/obras.mjs`).
+
+**Las tareas se hacen solas.** No dependen del chat: siguen aunque se cierre, varias a la vez y una por equipo, y te avisan por correo al acabar o atascarse. Cada una lee sus conexiones y escribe solo en la carpeta de su departamento, con un vigilante que falla cerrado y todo guardado en git (`server/escritura.mjs`).
+
 **Vida.** Un edificio en píxeles con plantas y ascensor, gente que se levanta, va a las reuniones y lleva recados. Cada departamento se reúne y decide cómo decorar su planta y qué KPI poner, sacados de sus datos.
 
 ## Seguridad: lo que no hay que aflojar
@@ -82,6 +86,10 @@ Lanza `scripts/auditar-permisos.mjs` y `scripts/probar-conexiones.mjs` antes de 
 - **Los servicios añaden herramientas sin avisar.** Drive estrenó cinco, de comentar y pedir acceso, y Meta ofrece 95 fuera de la lista, muchas de escritura. La lista de permitidas protege, pero lo que no quieres se deniega por nombre en el código.
 - **El `init` solo lista lo ya conectado.** Lo que tarda en conectar no sale ahí: se vigila también cada llamada.
 - **El ERP se caía en 8 de 12 arranques con cuatro a la vez,** y en ninguno en fila. Por eso los arranques van de uno en uno.
+- **Un tope que se agota sin avisar parece que no trabaja nadie.** Lo que pidas tú no debe esperar por un tope, y quien dirige debe ver su tablón: si no, se inventa que está en marcha.
+- **Lanzar compañeros desde el chat se corta.** Lo largo, en tareas que sobrevivan al chat y a un reinicio.
+- **Sin leer el correo ni escribir en su carpeta, casi todo se atasca** pidiendo «una sesión». Dales su ámbito y vigila los bordes, en vez de quitarles las manos.
+- **Mira el disco.** Las pruebas dejan temporales; lo llené y la oficina empezó a fallar.
 - **Las fichas de los agentes piden más de lo que tienen.** Un agente con `Bash` o `create_draft` en su ficha no los tiene aquí: manda la lista del perfil. Pruébalo pidiéndoles que manden un correo por las bravas.
 
 ## Lo que aprendimos simulando

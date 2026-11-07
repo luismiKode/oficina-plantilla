@@ -94,15 +94,14 @@ test('los equipos trabajan solos: la tarea pasa por en curso, y acaba hecha con 
 	const t = crearTareas({ db, dirDatos: dir, deps: [], ejecutor: async o => {
 		visto = o;
 		enCurso = db.uno('SELECT estado FROM tareas').estado;
-		const permiso = lista(o.args, '--allowedTools').find(x => x.startsWith('Write('));
-		fs.writeFileSync(path.join(permiso.slice('Write(/'.length, -'/**)'.length), 'resultado.md'), '# Conclusión');
+		fs.writeFileSync(path.join(JSON.parse(o.env.OFICINA_ESCRIBE_EN)[0], 'resultado.md'), '# Conclusión');
 		return { texto: 'Hecho.' };
 	} });
 	const id = t.crea({ equipo: 'fiscal', titulo: 'El 232', responsable: 'fiscal:modelos' });
 	await espera();
 	assert.equal(enCurso, 'en_curso');
-	assert.equal(visto.args[visto.args.indexOf('--setting-sources') + 1], 'project,local');
-	assert.equal(visto.args[visto.args.indexOf('--agent') + 1], 'modelos');
+	assert.equal(visto.args[visto.args.indexOf('--setting-sources') + 1], 'user,project,local');
+	assert.ok(!visto.args.includes('--agent'), 'su ficha va en el prompt');
 	const x = t.obtiene(id);
 	assert.equal(x.estado, 'hecha');
 	assert.equal(x.resultado, 'Hecho.');

@@ -44,6 +44,8 @@ function fraseHerramienta(h, e = {}) {
 	}
 	if (h === 'Grep') return `Buscando ${cita(e.pattern, 40) || 'en el archivo'}`;
 	if (h === 'Glob') return 'Buscando archivos';
+	if (h === 'Edit') return `Cambiando ${corto(path.basename(String(e.file_path ?? '')), 50) || 'un archivo'}`;
+	if (h === 'Bash') return /test/.test(String(e.command ?? '')) ? 'Pasando las pruebas' : /brew|npm install/.test(String(e.command ?? '')) ? 'Instalando lo que hace falta' : 'Trabajando en la obra';
 	if (h === 'Write') return `Escribiendo ${corto(path.basename(String(e.file_path ?? '')), 50) || 'un documento'}`;
 	if (h === 'Skill') return 'Repasando cómo se hace';
 	return 'Trabajando';

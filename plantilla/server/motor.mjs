@@ -28,6 +28,10 @@ export function registraUso(fn) { alUso = fn; }
 
 // El ERP se cae si varios se conectan a la vez (8 de cada 12 arranques con cuatro a la vez, ninguno en fila):
 // los arranques van de uno en uno, y lo que se haga después ya va en paralelo.
+// Al cerrar la oficina no se queda nadie trabajando por su cuenta: si no, al reiniciar habría dos haciendo lo mismo.
+const vivos = new Set();
+process.on('exit', () => { for (const h of vivos) { try { h.kill('SIGKILL'); } catch { /* ya no está */ } } });
+
 let ultimoArranque = Promise.resolve();
 function turnoDeArranque() {
 	let libre;
@@ -114,6 +118,8 @@ async function lanza({ bin, args: crudos, cwd, env = {}, auditar = NADA, alEvent
 				}
 			} else if (d.type === 'result') final = d;
 		};
+		vivos.add(hijo);
+		hijo.on('close', () => vivos.delete(hijo));
 		hijo.stdout.setEncoding('utf8');
 		hijo.stderr.setEncoding('utf8');
 		hijo.stdout.on('data', t => {

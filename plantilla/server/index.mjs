@@ -16,6 +16,7 @@ import { DEPARTAMENTOS, POR_ID } from './departamentos.mjs';
 import { crearReuniones } from './reuniones.mjs';
 import { crearLecciones } from './lecciones.mjs';
 import { crearVoz } from './voz.mjs';
+import { crearNotas } from './notas.mjs';
 import { crearCorreos } from './correos.mjs';
 import { crearDecorador } from './decoracion.mjs';
 import { crearLean } from './lean.mjs';
@@ -25,6 +26,7 @@ import { crearFundador } from './fundar.mjs';
 import { crearAvisoCorreo } from './avisame.mjs';
 import { crearCampanas } from './campanas.mjs';
 import { crearSubidas } from './subidas.mjs';
+import { crearObras } from './obras.mjs';
 import { execFile } from 'node:child_process';
 import { arrancaInfra } from './infra.mjs';
 
@@ -76,25 +78,32 @@ const voz = crearVoz();
 const escribeSala = (h, t, o) => salas.escribir(h, t, o);
 
 const fundador = crearFundador({ db, acme: CONFIG.EMPRESA, home: CONFIG.HOME, conPuerta: !CONFIG.SIMULACION });
-tareas = crearTareas({ db, bus, salud, avisa, mcpConfig, escribeSala, fundador, leccionesDe: d => lecciones.bloque(d), alResultado: (t, texto) => {
+const avisaTrabajo = a => avisoCorreo.manda({ ...a, trabajo: true }).catch(e => log('aviso:', e.message));
+tareas = crearTareas({ db, bus, salud, avisa, mcpConfig, escribeSala, alAvisar: avisaTrabajo, pluginsUsuario, fundador, leccionesDe: d => lecciones.bloque(d), alResultado: (t, texto) => {
 	const m = extraeMarcas(texto);
 	const h = resuelveHilo(t.responsable) ?? resuelveHilo(t.equipo);
 	for (const c of m.correos) correos.propone({ ...c, desde: t.responsable ?? t.equipo }).catch(e => log('correo:', e.message));
 	if (h?.persona.nivel === 'direccion') for (const n of m.tareas) if (n.equipo === 'alex') tareas.pideAAlex({ titulo: n.titulo, desde: t.responsable ?? t.equipo });
 } });
 const correos = crearCorreos({ db, bus, tareas, lecciones, avisa, escribeSala, pluginsUsuario, log });
+avisoCorreo.respaldo = a => correos.avisaAAlex(a);
 const campanasSalida = crearCampanas({ db, bus, tareas, escribeSala, aprendizaje, avisa, log, escribeFicha: !CONFIG.SIMULACION });
 const subidas = crearSubidas({ db, bus, tareas, log });
 reuniones = crearReuniones({ db, bus, salud, lecciones, tareas, avisa, mcpConfig, log, escribeSala, decorador: crearDecorador({ db, bus }) });
+// Reiniciar tras una obra espera a que nadie esté a mitad de algo.
+const obras = crearObras({ db, bus, tareas, log, alAvisar: avisaTrabajo, ocupada: () => salas.trabajando().length > 0 || tareas.ocupado() || correos.ocupado() || campanasSalida.ocupado() || notas.ocupado() });
+tareas.obras = obras;
 salas = crearSalas({
-	db, bus, salud, pluginsUsuario, avisa, tareas, correos, avisoCorreo, campanasSalida, aprendizaje,
+	db, bus, salud, pluginsUsuario, avisa, tareas, correos, avisoCorreo, campanasSalida, obras, aprendizaje,
 	proponerReunion: reuniones.propone,
 	opinar: t => reuniones.opina(t).catch(e => log('opinión:', e.message)),
 	leccionesDe: dep => lecciones.bloque(dep),
 	contexto: () => tareas.resumen(),
+	tablonDe: d => tareas.resumenDe(d),
 });
+const notas = crearNotas({ db, bus, voz, salas, log });
 
-const lean = crearLean({ db, bus, tareas, lecciones, log });
+const lean =crearLean({ db, bus, tareas, lecciones, log });
 
 let enPasada = false;
 // Dentro de la app no hay avisos: una alerta de dinero le llega también al correo.
@@ -106,13 +115,17 @@ const mirar = async () => {
 	try { await pasada(opcionesPasada); return true; } catch (e) { log('pasada:', e.message); throw e; } finally { enPasada = false; }
 };
 
-const app = crearApp({ db, bus, salas, tareas, lean, correosSalida: correos, campanasSalida, subidas, reuniones, lecciones, voz, avisos, salud, mirar, estatico: 'web/dist' });
+const app = crearApp({ db, bus, salas, tareas, lean, correosSalida: correos, campanasSalida, subidas, reuniones, lecciones, voz, notas, avisos, salud, mirar, estatico: 'web/dist' });
 
 await salud.comprobar();
 salas.arranca();
+notas.arranca();
+// Que el modelo esté antes de la primera nota. Si falla, se vuelve a intentar al transcribir.
+if (!CONFIG.SIMULACION) voz.preparaModelo().catch(e => log('modelo de Whisper:', e.message));
 correos.arranca();
 campanasSalida.arranca();
 subidas.arranca();
+obras.arranca();
 tareas.arranca();
 reuniones.arranca();
 lean.arranca();

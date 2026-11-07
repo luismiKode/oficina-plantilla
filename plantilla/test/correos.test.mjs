@@ -267,6 +267,94 @@ test('un error del conector después de llamar a enviar no se da por no enviado'
 	assert.match(m.tareas.obtiene(id).resultado, /Sin confirmar/);
 });
 
+/** Un envío que se queda a medias hasta que la prueba diga cómo acaba, con sus eventos a la vista. */
+function enviandoAMedias() {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'c-'));
+	const db = abrirDB(path.join(dir, 'o.db'));
+	const tareas = crearTareas({ db, dirDatos: dir, deps: [], tope: 0 });
+	const eventos = [];
+	let suelta, rompe, llama = false;
+	const entra = new Promise(r => { suelta = r; });
+	let alEntrar;
+	const yaEnvia = new Promise(r => { alEntrar = r; });
+	const ejecutor = async o => {
+		if (o.args.includes('--json-schema')) return { estructurado: { texto: 'Texto de Marga', lecciones: [] } };
+		alEntrar();
+		const como = await entra;
+		if (como === 'corta') { o.alEvento({ tipo: 'herramienta', herramienta: 'x__send_message', entrada: {} }); throw new Error('Se ha cortado'); }
+		if (como === 'antes') throw new Error('No hay conexión');
+		o.alEvento({ tipo: 'herramienta', herramienta: 'x__send_message', entrada: {} });
+		o.alEvento({ tipo: 'resultado', error: false, texto: 'ok' });
+		return { texto: 'ok' };
+	};
+	const bus = { emit: (_, e) => eventos.push(JSON.parse(tareas.obtiene(e.id).datos).enviando) };
+	const c = crearCorreos({ db, bus, tareas, ejecutor, dirDatos: dir, guia: () => '', escribeSala() {} });
+	return { c, tareas, eventos, yaEnvia, suelta };
+}
+
+test('mientras sale, cualquier dispositivo lo ve, y no se puede ni descartar ni cambiar', async () => {
+	const m = enviandoAMedias();
+	const id = await m.c.propone({ para: 'a@b.c', asunto: 'x', texto: 'x', desde: 'fiscal' });
+	const envio = m.c.decide(id, { accion: 'aprobar', texto: 'Mi texto editado' });
+	await m.yaEnvia;
+	const d = JSON.parse(m.tareas.obtiene(id).datos);
+	assert.equal(d.enviando, true, 'al recargar sigue saliendo');
+	assert.equal(d.texto, 'Mi texto editado', 'y con el texto que él ha aprobado');
+	assert.equal(m.eventos.at(-1), true, 'y los demás dispositivos se enteran');
+	assert.equal(m.tareas.deAlex().abiertas[0].id, id, 'la tarjeta sigue en su lista');
+	await assert.rejects(m.c.decide(id, { accion: 'aprobar' }), /enviando/);
+	await assert.rejects(m.c.decide(id, { accion: 'descartar' }), /enviando/);
+	await assert.rejects(m.c.decide(id, { accion: 'cambiar', nota: 'más corto' }), /enviando/);
+	m.suelta('bien');
+	await envio;
+	assert.equal(m.tareas.obtiene(id).estado, 'hecha', 'al acabar desaparece');
+	assert.equal(m.tareas.deAlex().abiertas.length, 0);
+});
+
+test('si falla seguro, la tarjeta vuelve con el error y su texto editado, avisando a todos', async () => {
+	const m = enviandoAMedias();
+	const id = await m.c.propone({ para: 'a@b.c', asunto: 'x', texto: 'x', desde: 'fiscal' });
+	const envio = m.c.decide(id, { accion: 'aprobar', texto: 'Mi texto editado' });
+	await m.yaEnvia;
+	m.suelta('antes');
+	await assert.rejects(envio, /No ha salido/);
+	const t = m.tareas.obtiene(id);
+	const d = JSON.parse(t.datos);
+	assert.equal(t.estado, 'por_hacer');
+	assert.equal(d.enviando, false);
+	assert.equal(d.texto, 'Mi texto editado');
+	assert.equal(m.eventos.at(-1), false);
+});
+
+test('si no se sabe si ha salido, se dice y no vuelve a la lista para repetirlo', async () => {
+	const m = enviandoAMedias();
+	const id = await m.c.propone({ para: 'a@b.c', asunto: 'x', texto: 'x', desde: 'fiscal' });
+	const envio = m.c.decide(id, { accion: 'aprobar' });
+	await m.yaEnvia;
+	m.suelta('corta');
+	await assert.rejects(envio, /No sé si ha salido/);
+	const t = m.tareas.obtiene(id);
+	assert.equal(t.estado, 'hecha');
+	assert.match(t.resultado, /^Sin confirmar/, 'la tarjeta se apoya en esto para seguir avisando');
+	assert.equal(m.tareas.deAlex().hechas[0].id, id);
+});
+
+test('los correos salen arriba y del más nuevo al más viejo; uno repetido conserva su sitio', async () => {
+	const m = monta(async o => o.args.includes('--json-schema') ? { estructurado: { texto: o.args[o.args.indexOf('-p') + 1].match(/<borrador>\n([\s\S]*?)\n<\/borrador>/)[1], lecciones: [] } } : { texto: 'ok' });
+	const correo = (asunto, texto = asunto) => m.c.propone({ para: 'a@b.c', asunto, texto, desde: 'fiscal' });
+	const primero = await correo('Primero');
+	m.tareas.crea({ titulo: 'Una tarea cualquiera', prioridad: 'alta' });
+	m.tareas.crea({ tipo: 'si', titulo: 'Un sí', origen: 'equipo', datos: { hilo: 'general' } });
+	const segundo = await correo('Segundo');
+	const tercero = await correo('Tercero');
+	const orden = () => m.tareas.deAlex().abiertas.map(t => t.id);
+	const delanteros = orden().slice(0, 3);
+	assert.deepEqual(delanteros, [tercero, segundo, primero]);
+	assert.equal(await correo('Primero'), primero, 'el repetido devuelve el id antiguo');
+	assert.deepEqual(orden().slice(0, 3), [tercero, segundo, primero], 'y no sube: conserva su sitio');
+	assert.equal(m.tareas.deAlex().abiertas[3].tipo, 'si');
+});
+
 test('si el Mac se reinicia enviando, no se manda otra vez', async () => {
 	const m = monta(marga());
 	const id = await m.c.propone({ para: 'a@b.c', asunto: 'x', texto: 'x', desde: 'fiscal' });

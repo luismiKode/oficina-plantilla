@@ -11,8 +11,11 @@ import { codigo, sprintDe } from './tareas.mjs';
 import { leeDecoracion } from './decoracion.mjs';
 import fs from 'node:fs';
 
-/** @param {{db, bus, salas, tareas, reuniones, lecciones, voz, avisos, salud, mirar:Function, dirDatos?:string, deps?:object[], estatico?:string}} o */
-export function crearApp({ db, bus, salas, tareas, lean, correosSalida, campanasSalida, subidas, reuniones, lecciones, voz, avisos, salud, mirar, dirDatos = CONFIG.DATOS, deps = DEPARTAMENTOS, estatico = null }) {
+const TIPOS_AUDIO = new Set(['audio/mp4', 'audio/m4a', 'audio/x-m4a', 'audio/aac', 'audio/webm', 'audio/ogg', 'audio/mpeg', 'audio/wav']);
+const tipoAudio = t => { const b = String(t ?? '').split(';')[0].trim().toLowerCase(); return TIPOS_AUDIO.has(b) ? b : 'application/octet-stream'; };
+
+/** @param {{db, bus, salas, tareas, reuniones, lecciones, voz, notas, avisos, salud, mirar:Function, dirDatos?:string, deps?:object[], estatico?:string}} o */
+export function crearApp({ db, bus, salas, tareas, lean, correosSalida, campanasSalida, subidas, reuniones, lecciones, voz, notas, avisos, salud, mirar, dirDatos = CONFIG.DATOS, deps = DEPARTAMENTOS, estatico = null }) {
 	const app = new Hono();
 	let recepcionTrabajando = false;
 	bus.on('evento', e => { if (e.tipo === 'recepcion') recepcionTrabajando = e.trabajando; });
@@ -88,7 +91,7 @@ export function crearApp({ db, bus, salas, tareas, lean, correosSalida, campanas
 		if (ultimo && ultimo > Number(db.ajuste(`visto:${id}`) || 0)) db.ajuste(`visto:${id}`, ultimo);
 		return c.json({
 			persona: { nombre: h.persona.nombre, cargo: h.persona.cargo, caracter: h.persona.caracter, look: h.persona.look, hilo: id, dep: h.dep, nombreDep: POR_ID[h.dep].nombre },
-			mensajes: m.map(x => ({ ...x, adjuntos: x.adjuntos ? JSON.parse(x.adjuntos).map(a => a.nombre) : [], pasos: x.pasos ? JSON.parse(x.pasos) : null })),
+			mensajes: m.map(x => ({ ...x, adjuntos: x.adjuntos ? JSON.parse(x.adjuntos).map(a => a.nombre) : [], audio: !!x.audio, pasos: x.pasos ? JSON.parse(x.pasos) : null })),
 			vivo: salas.enVivo?.(id) ?? null,
 			trabajando: !!db.uno(`SELECT id FROM mensajes WHERE sala = ? AND estado = 'en_curso' AND autor = 'alex'`, id),
 		});
@@ -97,15 +100,12 @@ export function crearApp({ db, bus, salas, tareas, lean, correosSalida, campanas
 	app.post('/api/salas/:hilo/mensajes', async c => {
 		if (!hilo(c)) return c.json({ error: 'Esa sala no existe' }, 404);
 		const f = await c.req.parseBody({ all: true });
-		let texto = String(f.texto ?? '').trim();
-		if (f.audio instanceof File) {
-			// Un audio de Alex se pasa a texto y se trata como lo que ha escrito. El audio no se guarda.
-			try { texto = await voz.transcribe(Buffer.from(await f.audio.arrayBuffer()), f.audio.name, f.audio.type); }
-			catch (e) { return c.json({ error: e.message }, 502); }
-			if (!texto) return c.json({ error: 'No se oye nada en ese audio' }, 400);
-		}
+		const audio = f.audio instanceof File ? f.audio : null;
+		const texto = audio ? '' : String(f.texto ?? '').trim();
+		if (audio && !audio.size) return c.json({ error: 'Ese audio está vacío' }, 400);
+		if (audio && audio.size > CONFIG.MAX_ADJUNTO) return c.json({ error: 'El audio pasa de 30 MB' }, 413);
 		const archivos = [f.archivos].flat().filter(a => a instanceof File);
-		if (!texto && !archivos.length) return c.json({ error: 'Mensaje vacío' }, 400);
+		if (!audio && !texto && !archivos.length) return c.json({ error: 'Mensaje vacío' }, 400);
 		const adjuntos = [];
 		for (const a of archivos) {
 			if (a.size > CONFIG.MAX_ADJUNTO) return c.json({ error: `${a.name} pasa de 30 MB` }, 413);
@@ -113,8 +113,44 @@ export function crearApp({ db, bus, salas, tareas, lean, correosSalida, campanas
 		}
 		if (texto.length > 100_000) return c.json({ error: 'Demasiado texto para un mensaje' }, 413);
 		// Esto y solo esto es Alex escribiendo: es lo único que abre lo que necesita su palabra.
-		const id = salas.escribir(c.req.param('hilo'), texto || 'Mira esto.', { deAlex: true, a_fondo: f.a_fondo === '1', adjuntos, origen: f.nota === '1' || f.audio instanceof File ? 'nota' : null });
+		// Una nota de voz se guarda primero y se contesta al momento: la procedencia queda fijada aquí, y el texto llega después.
+		if (audio) {
+			const guardado = guardaAdjunto(dirDatos, audio.name, Buffer.from(await audio.arrayBuffer()));
+			const id = salas.escribir(c.req.param('hilo'), '', { deAlex: true, a_fondo: f.a_fondo === '1', adjuntos, origen: 'nota', audio: { ...guardado, tipo: tipoAudio(audio.type) } });
+			notas.encola(id);
+			return c.json({ id });
+		}
+		const id = salas.escribir(c.req.param('hilo'), texto || 'Mira esto.', { deAlex: true, a_fondo: f.a_fondo === '1', adjuntos, origen: f.nota === '1' ? 'nota' : null });
 		return c.json({ id });
+	});
+
+	// El audio de una nota, para el reproductor. Safari no reproduce nada si no le sirven trozos (Range).
+	app.get('/api/salas/:hilo/mensajes/:id/audio', c => {
+		const m = db.uno(`SELECT audio FROM mensajes WHERE id = ? AND sala = ? AND audio IS NOT NULL`, Number(c.req.param('id')), c.req.param('hilo'));
+		const a = m && JSON.parse(m.audio);
+		if (!a || !fs.existsSync(a.ruta)) return c.json({ error: 'Ese audio no está' }, 404);
+		const datos = fs.readFileSync(a.ruta);
+		const r = /^bytes=(\d*)-(\d*)$/.exec(c.req.header('range') ?? '');
+		let ini = 0, fin = datos.length - 1, trozo = false;
+		if (r && (r[1] || r[2])) {
+			trozo = true;
+			if (r[1]) { ini = Number(r[1]); if (r[2]) fin = Math.min(Number(r[2]), fin); }
+			else ini = Math.max(0, datos.length - Number(r[2]));
+			if (ini >= datos.length || ini > fin) return new Response(null, { status: 416, headers: { 'content-range': `bytes */${datos.length}` } });
+		}
+		return new Response(datos.subarray(ini, fin + 1), {
+			status: trozo ? 206 : 200,
+			headers: {
+				'content-type': a.tipo, 'content-length': String(fin - ini + 1), 'accept-ranges': 'bytes', 'x-content-type-options': 'nosniff', 'cache-control': 'private, max-age=86400',
+				...(trozo ? { 'content-range': `bytes ${ini}-${fin}/${datos.length}` } : {}),
+			},
+		});
+	});
+
+	// Agotados los intentos, el botón de la burbuja. No crea nada ni cambia la procedencia: vuelve a la cola de transcribir.
+	app.post('/api/salas/:hilo/mensajes/:id/reintentar', c => {
+		if (!notas.reintenta(Number(c.req.param('id')), c.req.param('hilo'))) return c.json({ error: 'Esa nota no está para reintentar' }, 409);
+		return c.json({ ok: true });
 	});
 
 	// Lo que hablan entre ellos, aparte: lo de ahora arriba, y se puede buscar.

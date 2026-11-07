@@ -34,7 +34,9 @@ export const CONFIG = {
 	PASADAS: [[8, 30]],             // el saludo de la mañana; el resto lo dispara la vigía
 	VIGIA_MS: 10 * 60_000,
 	VIGIA_HORAS: [7, 23],
-	TOPES: { tareas: 20, reuniones: 10, avisos: 40, correos: 20, fichajes: 3 },
+	// Sin tope de tareas, por orden de Alex: las frena MAX_ENCARGOS a la vez, no un límite al día.
+	TOPES: { tareas: Infinity, reuniones: 10, avisos: 40, correos: 60, fichajes: 3 },
+	MAX_ENCARGOS: 3,
 	DIAS_PRIMERA_PASADA: 14,
 	ZONA: 'Europe/Madrid',
 	MAX_RONDAS: 3,

@@ -173,6 +173,7 @@ export function crearCampanas({ db, bus, tareas, escribeSala = () => {}, aprendi
 				if (!ok) throw new Error(resultado);
 			} finally { enCurso.delete(id); }
 		},
+		ocupado: () => enCurso.size > 0,
 		arranca() {
 			for (const t of db.q(`SELECT id, datos FROM tareas WHERE tipo = 'campana' AND estado != 'hecha' AND borrada = 0`)) {
 				const d = JSON.parse(t.datos ?? '{}');

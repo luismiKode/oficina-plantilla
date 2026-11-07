@@ -7,7 +7,7 @@ import path from 'node:path';
 import { CONFIG } from '../server/config.mjs';
 import { DEPARTAMENTOS, POR_ID } from '../server/departamentos.mjs';
 import { EQUIPO, hiloDe } from '../server/equipo.mjs';
-import { argsSala, argsCampanaAprobada, argsReunion, argsEncargo, argsRecepcion, argsEnvio, argsTexto, fueraDeLista } from '../server/perfiles.mjs';
+import { argsSala, argsObra, modoEncargo, argsCampanaAprobada, argsReunion, argsEncargo, argsRecepcion, argsEnvio, argsTexto, fueraDeLista } from '../server/perfiles.mjs';
 import { configERP } from '../server/tareas.mjs';
 
 const pluginsUsuario = Object.keys(JSON.parse(fs.readFileSync(path.join(CONFIG.CLAUDE_CONFIG_DIR, 'settings.json'), 'utf8')).enabledPlugins ?? {});
@@ -52,6 +52,8 @@ for (const d of DEPARTAMENTOS) {
 	casos.push({ quien: `${d.nombre}: encargo`, modo: 'encargo', dep: d.id, cwd: d.carpeta, args: argsEncargo(d.id, { prompt: ' x', sistema: 's', carpeta: d.carpeta, dirExpediente: dirTmp, mcpConfig, modelo: 'haiku' }) });
 }
 casos.push({ quien: 'Tere: pasada de correo', modo: 'recepcion', dep: 'recepcion', cwd: dirTmp, args: argsRecepcion({ prompt: ' x', pluginsUsuario, modelo: 'haiku' }) });
+for (const [dep, rol] of [['marketing', 'investigador-referencias'], ['marketing', 'creadores'], ['legal', 'marca'], ['fiscal', 'normativa'], ['marketing', 'analista']]) casos.push({ quien: `Encargo de ${rol}`, modo: modoEncargo(rol), dep, cwd: POR_ID[dep].carpeta, args: argsEncargo(dep, { prompt: ' x', sistema: 's', carpeta: POR_ID[dep].carpeta, dirExpediente: dirTmp, mcpConfig, modelo: 'haiku', rol }) });
+casos.push({ quien: 'Obra de Nico', modo: 'obra', dep: 'general', cwd: dirTmp, args: argsObra({ prompt: ' x', carpeta: dirTmp }) });
 casos.push({ quien: 'Enviar lo aprobado', modo: 'envio', dep: 'general', cwd: dirTmp, args: argsEnvio({ prompt: ' x', pluginsUsuario }) });
 casos.push({ quien: 'Aplicar un cambio aprobado de Meta', modo: 'campana-aprobada', dep: 'marketing', cwd: POR_ID.marketing.carpeta, args: argsCampanaAprobada({ herramienta: 'mcp__meta-ads__ads_update_entity', prompt: ' x' }), deja: ['mcp__meta-ads__ads_update_entity'] });
 
@@ -66,7 +68,7 @@ await Promise.all(Array.from({ length: paralelo }, async () => {
 		const c = casos[i];
 		const d = await init(c.args, c.cwd);
 		if (d.error) { resultados[i] = { ...c, error: d.error }; continue; }
-		resultados[i] = { ...c, tools: d.tools, modoPermisos: d.permissionMode, mcp: d.mcp_servers ?? [], fuera: fueraDeLista(d.tools, c.dep, c.modo).filter(t => !(c.deja ?? []).includes(t)), nunca: d.tools.filter(t => NUNCA.test(t) && !(c.modo === 'envio' && t.endsWith('Gmail__send_message'))) };
+		resultados[i] = { ...c, tools: d.tools, modoPermisos: d.permissionMode, mcp: d.mcp_servers ?? [], fuera: fueraDeLista(d.tools, c.dep, c.modo).filter(t => !(c.deja ?? []).includes(t)), nunca: d.tools.filter(t => NUNCA.test(t) && !(c.modo === 'envio' && t.endsWith('Gmail__send_message')) && !(c.modo === 'encargo-web' && /^Web/.test(t)) && !(c.modo === 'encargo-datos' && /^(Bash|WebFetch)$/.test(t)) && !(c.modo === 'obra' && t === 'Bash' || c.modo === 'obra' && t === 'Edit')) };
 	}
 }));
 

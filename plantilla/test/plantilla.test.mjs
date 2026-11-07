@@ -15,9 +15,11 @@ import { validaFundacion, fundaDepartamento, crearFundador } from '../server/fun
 import { revisaInfra, arrancaInfra } from '../server/infra.mjs';
 import { fraseDe, crearTurno } from '../server/actividad.mjs';
 import { parteDeTere, promptPasada, pasada } from '../server/recepcion.mjs';
-import { fueraDeLista, permitidas, argsSala, argsCampanaAprobada, puedeCampanas, HOOK_CAMPANA } from '../server/perfiles.mjs';
+import { fueraDeLista, permitidas, argsSala, argsEncargo, argsCampanaAprobada, argsObra, puedeCampanas, HOOK_CAMPANA, HOOK_ESCRITURA } from '../server/perfiles.mjs';
+import { rechazoEscritura } from '../server/escritura.mjs';
 import { crearAvisoCorreo, TOPE_DIA } from '../server/avisame.mjs';
 import { guardaEnGit } from '../server/guarda-git.mjs';
+import { crearObras, tocaControles } from '../server/obras.mjs';
 import { crearSubidas, sinSubir } from '../server/subidas.mjs';
 import { crearLecciones } from '../server/lecciones.mjs';
 import { crearCampanas, firmaCampana, describeCampana, hookCampanaSano } from '../server/campanas.mjs';
@@ -61,7 +63,7 @@ test('Pilar sabe lo que puede hacer y Nico que no toca nada', () => {
 	const p = sistema('general', resuelveHilo('general:rrhh').persona);
 	assert.match(p, /FICHAR/); assert.match(p, /FUNDAR/); assert.match(p, /firma y paga Alex/);
 	const n = sistema('general', resuelveHilo('general:infra').persona);
-	assert.match(n, /no mueves ni escribes/); assert.doesNotMatch(n, /\[\[FUNDAR/);
+	assert.match(n, /\[\[OBRA:/); assert.match(n, /Ahí no mueves nada/); assert.doesNotMatch(n, /\[\[FUNDAR/);
 });
 
 test('un freelance entra sin preguntar, con tope y sin repetir nombres; un fijo pide el sí', () => {
@@ -757,4 +759,214 @@ test('sin remoto no hay tarjeta ni se inventa uno', async () => {
 	spawnSync('git', ['init', '-q'], { cwd: dir });
 	assert.equal(await sinSubir(dir), null);
 	assert.equal(await sinSubir(tmp()), null);
+});
+
+// ---- La oficina se mejora a sí misma
+function obraDePrueba({ cambia = async () => {}, comprueba = async () => null } = {}) {
+	const repo = tmp(), obra = path.join(tmp(), 'obra');
+	const g = (...a) => spawnSync('git', a, { cwd: repo, encoding: 'utf8' });
+	g('init', '-q', '-b', 'main'); g('config', 'user.email', 'a@b.c'); g('config', 'user.name', 'x');
+	fs.mkdirSync(path.join(repo, 'web')); fs.writeFileSync(path.join(repo, 'a.txt'), 'x'); g('add', '-A'); g('commit', '-q', '-m', 'base');
+	const d = db(), avisos = [], si = [];
+	let reinicios = 0;
+	const o = crearObras({ db: d, repo, obra, comprueba, reinicia: () => reinicios++, tareas: { crea: x => si.push(x) }, ejecutor: async op => { await cambia(obra, op); return { texto: 'Cambiado.', sesion: 's' }; } });
+	return { d, o, g, repo, obra, si, reinicios: () => reinicios, avisos };
+}
+const hasta = async f => { for (let i = 0; i < 200 && !f(); i++) await new Promise(r => setTimeout(r, 25)); assert.ok(f(), 'no ha llegado'); };
+
+test('obra: si las pruebas fallan se lo devuelve una vez y, si sigue mal, no se pone nada en marcha', async () => {
+	let intentos = 0;
+	const t = obraDePrueba({ cambia: async dir => { intentos++; fs.writeFileSync(path.join(dir, 'b.txt'), `v${intentos}`); }, comprueba: async () => 'Las pruebas fallan:\nmal' });
+	t.o.encarga({ texto: 'Añade b' });
+	await hasta(() => t.d.q(`SELECT * FROM mensajes WHERE sala = 'general:infra'`).length > 0);
+	assert.equal(intentos, 2);
+	assert.equal(t.reinicios(), 0);
+	assert.equal(t.g('log', '-1', '--format=%s').stdout.trim(), 'base', 'lo que está en marcha sigue igual');
+	assert.ok(!fs.existsSync(path.join(t.repo, 'b.txt')));
+	assert.match(t.d.uno(`SELECT texto FROM mensajes WHERE sala = 'general:infra'`).texto, /no la he puesto en marcha/);
+});
+
+test('obra: lo que toca controles pide un sí y no se pone en marcha', async () => {
+	const t = obraDePrueba({ cambia: async dir => { fs.mkdirSync(path.join(dir, 'server'), { recursive: true }); fs.writeFileSync(path.join(dir, 'server/perfiles.mjs'), 'x'); } });
+	t.o.encarga({ texto: 'Dame más permisos' });
+	await hasta(() => t.si.length > 0);
+	assert.match(t.si[0].titulo, /perfiles/);
+	assert.equal(t.si[0].tipo, 'si');
+	assert.equal(t.reinicios(), 0);
+	assert.equal(t.g('log', '-1', '--format=%s').stdout.trim(), 'base');
+});
+
+test('qué cuenta como control', () => {
+	for (const a of ['server/perfiles.mjs', 'server/motor.mjs', 'server/hook-envio.mjs', 'server/app.mjs', 'server/obras.mjs', 'CLAUDE.md', 'docs/REGLAMENTO.md', 'launchd/x.plist']) assert.equal(tocaControles([a]).length, 1, a);
+	for (const a of ['web/src/pantallas/Sala.svelte', 'server/voz.mjs', 'test/x.test.mjs', 'README.md']) assert.equal(tocaControles([a]).length, 0, a);
+});
+
+test('el perfil de obra: su carpeta, sin conectores, sin subir nada', () => {
+	const a = argsObra({ prompt: 'x', carpeta: '/k/obra' });
+	assert.equal(a[a.indexOf('--setting-sources') + 1], 'project');
+	assert.ok(a.includes('--strict-mcp-config'));
+	const dadas = a.slice(a.indexOf('--allowedTools') + 1, a.indexOf('--append-system-prompt'));
+	assert.ok(dadas.includes('Write(//k/obra/**)') && dadas.includes('Bash(node --test:*)'));
+	assert.ok(!dadas.includes('Bash') && !dadas.includes('Write') && !dadas.some(x => /push/.test(x)));
+	assert.ok(JSON.parse(a[a.indexOf('--settings') + 1]).permissions.deny.includes('Bash(git push:*)'));
+	assert.equal(fueraDeLista(['mcp__claude_ai_Gmail__search_threads'], 'general', 'obra').length, 1);
+});
+
+test('solo Nico encarga obras; con algo de fuera delante, o por un recado, pide el sí', async () => {
+	const lanza = async (hilo, opciones, lee) => {
+		const encargos = [], si = [];
+		const s = crearSalas({ db: db(), bus: new EventEmitter(), salud: { ok() {}, estado: () => ({}) }, obras: { encarga: x => encargos.push(x), enVivo: () => null }, tareas: { crea: x => { if (x.tipo === 'si') si.push(x); return 1; } }, ejecutor: async o => { if (lee) o.alEvento({ tipo: 'herramienta', herramienta: lee, entrada: {} }); return { texto: '[[OBRA: arregla esto]]', sesion: 's' }; } });
+		s.escribir(hilo, 'Hazlo', opciones);
+		await espera();
+		return { encargos, si };
+	};
+	assert.equal((await lanza('general:infra', { deAlex: true })).encargos.length, 1);
+	assert.equal((await lanza('general:rrhh', { deAlex: true })).encargos.length, 0);
+	const leyo = await lanza('general:infra', { deAlex: true }, 'mcp__claude_ai_Gmail__get_thread');
+	assert.deepEqual([leyo.encargos.length, leyo.si.length], [0, 1]);
+	const correo = await lanza('general:infra', { de_sala: 'general:recepcion', origen: 'correo' });
+	assert.deepEqual([correo.encargos.length, correo.si.length], [0, 1]);
+	assert.equal(extraeMarcas('Voy. [[OBRA: x]]').texto, 'Voy.');
+});
+
+// ---- Que el trabajo se haga de verdad
+function taller(ejecutor, extra = {}) {
+	const dir = tmp(), d = abrirDB(path.join(dir, 'o.db'));
+	return { d, t: crearTareas({ db: d, bus: new EventEmitter(), salud: { ok() {}, estado: () => ({}) }, dirDatos: dir, ejecutor, tope: 1, ...extra }) };
+}
+
+test('lo que pide Alex no espera por el tope; el resto, sí', async () => {
+	const hechos = [];
+	const { d, t } = taller(async o => { hechos.push(o.args[o.args.indexOf('-p') + 1].slice(0, 12)); return { texto: 'ok' }; });
+	d.ajuste(`hechas:${new Date().toISOString().slice(0, 10)}`, 1);
+	t.crea({ equipo: 'fiscal', titulo: 'Rutinaria', origen: 'equipo' });
+	t.crea({ equipo: 'legal', titulo: 'Pedida', origen: 'equipo', responsable: 'legal', datos: { pedido: 7, hilo: 'legal' } });
+	await espera();
+	assert.equal(hechos.length, 1);
+	assert.equal(t.obtiene(1).estado, 'por_hacer');
+	assert.equal(t.obtiene(2).estado, 'hecha');
+});
+
+test('varias a la vez, pero una por equipo y en orden: lo de Marco ve lo de Iris', async () => {
+	const prompts = [];
+	let activos = 0, maximo = 0;
+	const { t } = taller(async o => { activos++; maximo = Math.max(maximo, activos); prompts.push(o.args[o.args.indexOf('-p') + 1]); await new Promise(r => setTimeout(r, 15)); activos--; return { texto: 'Hecho por el primero' }; }, { tope: 60 });
+	t.crea({ equipo: 'fiscal', titulo: 'Otra', origen: 'equipo' });
+	t.crea({ equipo: 'marketing', titulo: 'Iris: nichos', origen: 'equipo', responsable: 'marketing:investigador-referencias', datos: { pedido: 9, hilo: 'marketing' } });
+	t.crea({ equipo: 'marketing', titulo: 'Marco: plan', origen: 'equipo', responsable: 'marketing:medios', datos: { pedido: 9, hilo: 'marketing' } });
+	await new Promise(r => setTimeout(r, 120));
+	assert.equal(maximo, 2, 'fiscal y marketing a la vez; marketing de uno en uno');
+	assert.match(prompts.at(-1), /Marco: plan/);
+	assert.match(prompts.at(-1), /Hecho por el primero/);
+});
+
+test('al acabar o atascarse, se le dice en el chat donde lo pidió', async () => {
+	const { d, t } = taller(async () => ({ texto: 'Informe listo.' }), { tope: 60 });
+	t.crea({ equipo: 'marketing', titulo: 'Iris: nichos', origen: 'equipo', responsable: 'marketing:investigador-referencias', datos: { pedido: 9, hilo: 'marketing' } });
+	await espera();
+	assert.match(d.uno(`SELECT texto FROM mensajes WHERE sala = 'marketing'`).texto, /Iris ha acabado\. Informe listo/);
+});
+
+test('Lucía encarga por persona: va con su rol, delante y con aviso', async () => {
+	const creadas = [];
+	const s = crearSalas({ db: db(), bus: new EventEmitter(), salud: { ok() {}, estado: () => ({}) }, tareas: { crea: x => { creadas.push(x); return 1; } }, ejecutor: async () => ({ texto: 'Voy.[[TAREA: marketing:investigador-referencias | Mira nichos]][[TAREA: marketing | Nora: mide el embudo]][[TAREA: fiscal:modelos | no es suyo]]', sesion: 's' }) });
+	const id = s.escribir('marketing', 'Poned al equipo', { deAlex: true });
+	await espera();
+	assert.equal(creadas.length, 2);
+	assert.equal(creadas[0].responsable, 'marketing:investigador-referencias');
+	assert.equal(creadas[1].responsable, 'marketing:analista');
+	assert.deepEqual(creadas[0].datos, { pedido: id, hilo: 'marketing' });
+	assert.equal(creadas[0].prioridad, 'alta');
+});
+
+test('nadie le manda a abrir otra sesión, y quien dirige ve su tablón', async () => {
+	assert.match(sistema('marketing', resuelveHilo('marketing').persona), /Nunca le pidas a Alex que abra otra sesión/);
+	assert.match(sistema('marketing', resuelveHilo('marketing').persona), /marketing:rol/);
+	let prompt = '';
+	const s = crearSalas({ db: db(), bus: new EventEmitter(), salud: { ok() {}, estado: () => ({}) }, tablonDe: () => '  EN CURSO AHORA T-0001 Nichos', ejecutor: async o => { prompt = o.args[o.args.indexOf('-p') + 1]; return { texto: 'Sí', sesion: 's' }; } });
+	s.escribir('marketing', '¿Están trabajando?', { deAlex: true });
+	await espera();
+	assert.match(prompt, /EN CURSO AHORA T-0001/);
+});
+
+test('quien investiga tiene web y ninguna conexión; quien saca números, solo sus scripts', () => {
+	const w = argsEncargo('marketing', { prompt: 'x', sistema: 's', carpeta: '/m', dirExpediente: '/e', rol: 'investigador-referencias', mcpConfig: '/erp.json' });
+	assert.ok(w.includes('WebSearch') && w.includes('WebFetch') && w.includes('--strict-mcp-config'));
+	assert.ok(!w.includes('--mcp-config'), 'sin ERP');
+	assert.ok(w.slice(w.indexOf('--disallowedTools')).includes('Bash'));
+	assert.equal(fueraDeLista(['WebFetch'], 'marketing', 'encargo-web').length, 0);
+	assert.equal(fueraDeLista(['mcp__mi-erp__resumen', 'Bash', 'mcp__claude_ai_Gmail__search_threads'], 'marketing', 'encargo-web').length, 3);
+	const n = argsEncargo('marketing', { prompt: 'x', sistema: 's', carpeta: '/m', dirExpediente: '/e', rol: 'analista' });
+	assert.ok(n.includes('Bash(python3 7-Datos/scripts/*)'));
+	assert.ok(n.includes('WebFetch(domain:acme.diy)'));
+	const dn = n.slice(n.indexOf('--allowedTools'), n.indexOf('--disallowedTools'));
+	assert.ok(!dn.includes('Bash') && !dn.includes('WebFetch'), 'Bash y web sueltos, no');
+	const o = argsEncargo('marketing', { prompt: 'x', sistema: 's', carpeta: '/m', dirExpediente: '/e', rol: 'medios' });
+	const deo = o.slice(o.indexOf('--disallowedTools'));
+	assert.ok(deo.includes('Bash') && deo.includes('WebFetch') && deo.includes('mcp__claude_ai_Gmail__send_message') && deo.includes('mcp__meta-ads__ads_update_entity'));
+});
+
+test('quien dirige ve por qué se atasca una tarea, y el siguiente recibe lo que dejó', async () => {
+	const prompts = [];
+	let n = 0;
+	const { t } = taller(async o => { prompts.push(o.args[o.args.indexOf('-p') + 1]); return { texto: n++ === 0 ? 'Parte hecha [[BLOQUEADA: errores 429]]' : 'Plan' }; }, { tope: 60 });
+	t.crea({ equipo: 'marketing', titulo: 'Iris: nichos', origen: 'equipo', responsable: 'marketing:investigador-referencias', datos: { pedido: 9, hilo: 'marketing' } });
+	await espera();
+	assert.match(t.resumenDe('marketing'), /atascada .*Motivo: .*429/);
+	t.crea({ equipo: 'marketing', titulo: 'Marco: plan', origen: 'equipo', responsable: 'marketing:medios', datos: { pedido: 9, hilo: 'marketing' } });
+	await espera();
+	assert.match(prompts[1], /Parte hecha/);
+});
+
+test('al acabar o atascarse un encargo suyo, también le llega fuera de la app', async () => {
+	const avisos = [];
+	const { t } = taller(async o => ({ texto: o.args[o.args.indexOf('-p') + 1].includes('uno') ? 'Listo.' : 'Algo [[BLOQUEADA: falta un dato]]' }), { tope: 60, alAvisar: a => avisos.push(a) });
+	t.crea({ equipo: 'fiscal', titulo: 'Clara: uno', origen: 'equipo', responsable: 'fiscal:modelos', datos: { pedido: 1, hilo: 'fiscal' } });
+	t.crea({ equipo: 'legal', titulo: 'Alba: dos', origen: 'equipo', responsable: 'legal:contratos', datos: { pedido: 2, hilo: 'legal' } });
+	t.crea({ equipo: 'marketing', titulo: 'Rutinaria', origen: 'equipo' });
+	await espera();
+	assert.equal(avisos.length, 2, 'lo que no ha pedido él no le avisa');
+	assert.ok(avisos.some(a => /Ha acabado: uno/.test(a.asunto)));
+	assert.ok(avisos.some(a => /Se ha atascado: dos/.test(a.asunto) && /falta un dato/.test(a.texto)));
+});
+
+test('Tere no se lee los avisos de la oficina', () => {
+	assert.match(promptPasada({ consultaDesde: '2026/11/01' }), /-subject:"\[Oficina\]"/);
+});
+
+test('escribir: en su carpeta sí; fuera, las normas, claves y enlaces no', () => {
+	const c = tmp(), fuera = tmp();
+	const real = fs.realpathSync;
+	const no = (f, o = {}) => assert.ok(rechazoEscritura(f, [c], { real, ...o }), f);
+	assert.equal(rechazoEscritura(path.join(c, 'ESTADO.md'), [c], { real }), null);
+	assert.equal(rechazoEscritura(path.join(c, 'a/b/nuevo.md'), [c], { real }), null);
+	no(path.join(fuera, 'x.md'));
+	no(path.join(c, '..', 'x.md'));
+	no(`${c}-otro/x.md`);
+	no(path.join(c, 'CLAUDE.md'));
+	assert.equal(rechazoEscritura(path.join(c, 'CLAUDE.md'), [c], { real, mapa: true }), null, 'quien lleva el mapa');
+	for (const f of ['.claude/settings.json', '.claude/agents/x.md', '.git/config', '.env', '.env.local', 'a/secretos.txt', 'clave.pem']) no(path.join(c, f));
+	fs.symlinkSync(fuera, path.join(c, 'enlace'));
+	no(path.join(c, 'enlace', 'x.md'));
+	assert.ok(rechazoEscritura(null, [c]));
+	const lanza = (f, dirs) => spawnSync(process.execPath, [HOOK_ESCRITURA], { input: JSON.stringify({ tool_input: { file_path: f } }), env: { ...process.env, OFICINA_ESCRIBE_EN: JSON.stringify(dirs) } }).status;
+	assert.equal(lanza(path.join(c, 'ok.md'), [c]), 0);
+	assert.equal(lanza(path.join(fuera, 'ok.md'), [c]), 2);
+	assert.equal(lanza(path.join(c, 'ok.md'), []), 2, 'sin carpeta, nada');
+});
+
+test('una tarea lee sus conexiones, escribe con el hook y sigue sin poder sacar nada', () => {
+	const a = argsEncargo('finanzas', { prompt: 'x', sistema: 's', carpeta: '/f', dirExpediente: '/e', rol: 'contable' });
+	const dadas = a.slice(a.indexOf('--allowedTools'), a.indexOf('--disallowedTools'));
+	assert.ok(dadas.includes('mcp__claude_ai_Gmail__get_thread') && dadas.includes('mcp__mi-erp__facturas') && dadas.includes('Write'));
+	const den = a.slice(a.indexOf('--disallowedTools'));
+	for (const h of ['mcp__claude_ai_Gmail__send_message', 'mcp__claude_ai_Gmail__create_draft', 'mcp__mi-erp__alta_factura_recibida', 'mcp__claude_ai_Slack__slack_send_message', 'Bash', 'WebFetch', 'WebSearch']) assert.ok(den.includes(h), h);
+	assert.ok(!a.includes('--agent'), 'con su ficha en el prompt, para que no le quite herramientas');
+	const hooks = JSON.parse(a[a.indexOf('--settings') + 1]).hooks.PreToolUse;
+	assert.ok(hooks.some(h => /Write/.test(h.matcher) && /hook-escritura.*\|\| exit 2/.test(h.hooks[0].command)));
+	const f = permitidas('finanzas', 'encargo');
+	assert.ok(f.has('Write') && !f.has('Bash') && !f.has('mcp__mi-erp__alta_factura_recibida'));
+	assert.ok(!JSON.parse(a[a.indexOf('--settings') + 1]).permissions.deny.some(x => /Desktop/.test(x)), 'Finanzas ve la bandeja');
+	const o = argsEncargo('fiscal', { prompt: 'x', sistema: 's', carpeta: '/f', dirExpediente: '/e', rol: 'modelos' });
+	assert.ok(JSON.parse(o[o.indexOf('--settings') + 1]).permissions.deny.some(x => /Desktop/.test(x)));
 });

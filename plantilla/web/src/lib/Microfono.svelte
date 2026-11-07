@@ -3,7 +3,7 @@
 	import { mandaFormulario } from './api.js';
 
 	let { hilo = 'general', alEnviar = null } = $props();
-	let grabando = $state(false), enviando = $state(false), mensaje = $state('');
+	let grabando = $state(false), enviando = $state(false), mensaje = $state(''), sinSubir = $state(null);
 	let rec, trozos = [], flujo;
 
 	const compatible = typeof MediaRecorder !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
@@ -23,21 +23,29 @@
 	}
 	function para() { rec?.stop(); flujo?.getTracks().forEach(t => t.stop()); grabando = false; }
 	async function envia(blob, tipo) {
-		enviando = true;
+		enviando = true; mensaje = '';
+		// Hasta que el Mac lo tenga, el audio solo está aquí: si la red falla, no se pierde.
+		sinSubir = { blob, tipo };
 		const fd = new FormData();
 		fd.append('audio', new File([blob], tipo.includes('mp4') ? 'nota.m4a' : 'nota.webm', { type: tipo }));
 		try {
 			await mandaFormulario(`/api/salas/${encodeURIComponent(hilo)}/mensajes`, fd);
+			sinSubir = null;
 			if (alEnviar) alEnviar(); else location.hash = `#/sala/${encodeURIComponent(hilo)}`;
-		} catch (e) { mensaje = e.message; }
+		} catch (e) {
+			if (/30 MB/.test(e.message)) { sinSubir = null; mensaje = e.message; }
+			else mensaje = `No ha llegado: ${e.message}. Toca para repetir.`;
+		}
 		enviando = false;
 	}
+	const pulsa = () => { if (grabando) para(); else if (sinSubir) envia(sinSubir.blob, sinSubir.tipo); else empieza(); };
 </script>
 
 {#if compatible}
 	<div class="mic">
 		{#if mensaje}<p class="msg" role="status">{mensaje}</p>{/if}
-		<button class="b" class:rojo={grabando} disabled={enviando} aria-label={grabando ? 'Parar y enviar' : 'Grabar un audio'} onclick={grabando ? para : empieza}>
+		{#if sinSubir && !enviando}<button type="button" class="boton texto" onclick={() => { sinSubir = null; mensaje = ''; }}>Descartar</button>{/if}
+		<button type="button" class="b" class:rojo={grabando} disabled={enviando} aria-label={grabando ? 'Parar y enviar' : sinSubir ? 'Repetir el envío del audio' : 'Grabar un audio'} onclick={pulsa}>
 			{#if grabando}<span class="cuadro"></span>{:else if enviando}<span class="puntos">...</span>{:else}
 				<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor" /><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
 			{/if}

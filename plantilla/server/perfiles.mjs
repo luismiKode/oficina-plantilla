@@ -77,8 +77,11 @@ export function permitidas(dep, modo = 'sala') {
 	if (modo === 'borrador') return new Set(GMAIL_BORRADOR);
 	if (modo === 'envio') return new Set([GMAIL_ENVIAR]);
 	if (modo === 'campana-aprobada') return new Set();
+	if (modo === 'encargo-web') return new Set(['Read', 'Grep', 'Glob', 'Agent', 'Task', 'Write', 'WebSearch', 'WebFetch', 'StructuredOutput']);
+	if (modo === 'encargo-datos') return new Set([...permitidas(dep, 'encargo'), 'Bash', 'WebFetch']);
+	if (modo === 'obra') return new Set(['Read', 'Grep', 'Glob', 'Write', 'Edit', 'Bash']);
 	if (modo === 'reunion') return new Set(['Read', 'Grep', 'Glob', 'Agent', 'Task', 'StructuredOutput', ...ERP_LEER, ...lecturaMarketing(dep)]);
-	if (modo === 'encargo') return new Set([...NUCLEO_SALA.filter(x => x !== 'Skill'), 'Write', ...ERP_LEER, ...lecturaMarketing(dep)]);
+	if (modo === 'encargo') return new Set([...permitidas(dep, 'sala'), 'Write', 'Edit']);
 	const d = POR_ID[dep];
 	if (!d) throw new Error(`Departamento desconocido: ${dep}`);
 	return new Set([
@@ -98,6 +101,10 @@ function denegarLectura(dep, h = CONFIG.HOME) {
 		'.codex', '.docker', '.cache', '.local', '.nvm', '.npm', 'Downloads', 'Desktop',
 		'Documents/Personal', 'Documents/ClaudePersonal', 'Documents/Claude', 'Documents/Codex',
 	];
+	// El dosier de Privado solo lo abre Legal
+	// La bandeja de facturas está en el escritorio: la abre Finanzas.
+	if (dep === 'finanzas') rutas.splice(rutas.indexOf('Desktop'), 1);
+	if (dep !== 'legal') rutas.push('Documents/Acme/4-Negocio/Legal/5-Disputas/privado', 'Documents/Acme/4-Negocio/privado');
 	const r = [];
 	for (const t of ['Read', 'Grep', 'Glob']) {
 		for (const p of rutas) r.push(`${t}(/${path.join(h, p)}/**)`);
@@ -112,6 +119,7 @@ const HOOK_BORRADOR = fileURLToPath(new URL('./hook-borrador.mjs', import.meta.u
 const cerrado = ruta => [{ type: 'command', command: `"${process.execPath}" "${ruta}" || exit 2` }];
 const HOOK_PRIVADO = fileURLToPath(new URL('./hook-privado.mjs', import.meta.url));
 export const HOOK_ENVIO = fileURLToPath(new URL('./hook-envio.mjs', import.meta.url));
+export const HOOK_ESCRITURA = fileURLToPath(new URL('./hook-escritura.mjs', import.meta.url));
 export const HOOK_CAMPANA = fileURLToPath(new URL('./hook-campanas.mjs', import.meta.url));
 const hooks = () => ({ PreToolUse: [
 	{ matcher: GMAIL_BORRADOR[0], hooks: cerrado(HOOK_BORRADOR) },
@@ -186,23 +194,48 @@ export function argsTexto({ prompt, sistema, esquema, modelo = CONFIG.MODELO_A_F
 	];
 }
 
+/** Quien investiga fuera: tiene web pero ninguna conexión ni dato de fuera de su carpeta, para que lo que lea en una página no pueda sacar nada. */
+export const ROLES_WEB = new Set(['investigador-referencias', 'creadores', 'marca', 'normativa']);
+/** Quien saca números: además puede lanzar los scripts de datos de su departamento, y solo esos. */
+export const ROLES_DATOS = new Set(['analista']);
+export const modoEncargo = rol => (ROLES_WEB.has(rol) ? 'encargo-web' : ROLES_DATOS.has(rol) ? 'encargo-datos' : 'encargo');
+
 /** Encargo: sin ajustes globales de Alex, lee su carpeta y escribe solo en su expediente. */
-export function argsEncargo(dep, { prompt, sistema, carpeta, dirExpediente, mcpConfig, modelo = CONFIG.MODELO_A_FONDO, rol = null, denegadasExtra = [] }) {
+export function argsEncargo(dep, { prompt, sistema, carpeta, dirExpediente, mcpConfig, modelo = CONFIG.MODELO_A_FONDO, rol = null, denegadasExtra = [], pluginsUsuario = [] }) {
 	if (CONFIG.SIMULACION) return argsMundo({ prompt, sistema, modelo: CONFIG.MODELO, dirExpediente, persistir: false });
-	const permit = [...permitidas(dep, 'encargo')].filter(h => !['Read', 'Write', 'Grep', 'Glob'].includes(h));
+	if (ROLES_WEB.has(rol)) {
+		return [
+			'-p', prompt, '--model', modelo,
+			'--setting-sources', 'project,local',
+			'--strict-mcp-config',
+			'--settings', JSON.stringify({ autoMemoryEnabled: false, permissions: { deny: [...denegarLectura(dep), ...denegarEscritura()] } }),
+			'--tools', 'Read,Grep,Glob,Agent,Write,WebSearch,WebFetch',
+			'--allowedTools', `Read(/${carpeta}/**)`, `Grep(/${carpeta}/**)`, `Glob(/${carpeta}/**)`, `Read(/${dirExpediente}/**)`, `Edit(/${dirExpediente}/**)`, `Write(/${dirExpediente}/**)`, 'WebSearch', 'WebFetch', 'Agent', 'Task',
+			'--disallowedTools', 'Bash', 'NotebookEdit', 'SendMessage', 'CronCreate', 'RemoteTrigger', ...denegadasExtra,
+			'--append-system-prompt', sistema,
+			'--agent', rol,
+			...salida(),
+		];
+	}
+	const datos = ROLES_DATOS.has(rol);
+	const ok = [...permitidas(dep, 'encargo')].filter(h => !['Write', 'Edit'].includes(h));
+	// Lee lo mismo que en su chat, para no atascarse pidiendo «una sesión». Sin nada que saque datos fuera.
+	// Con ajustes de usuario, Write queda abierto: por eso escribir pasa siempre por el hook, que falla cerrado.
 	const args = [
 		'-p', prompt, '--model', modelo,
-		'--setting-sources', 'project,local',
-		'--settings', JSON.stringify({ autoMemoryEnabled: false, permissions: { deny: [...denegarLectura(dep), ...denegarEscritura()] } }),
-		'--tools', 'Read,Grep,Glob,Agent,Write',
-		// Las reglas de Edit gobiernan también a Write: denegar Edit bloquearía el expediente. `--tools` ya deja Edit fuera.
-		'--allowedTools', `Read(/${carpeta}/**)`, `Grep(/${carpeta}/**)`, `Glob(/${carpeta}/**)`, `Read(/${dirExpediente}/**)`, `Edit(/${dirExpediente}/**)`, `Write(/${dirExpediente}/**)`, ...permit,
-		'--disallowedTools', ...ESCRITURA, ...GMAIL_LEER, ...GMAIL_BORRADOR, ...CALENDARIO_LEER, ...DRIVE_LEER, ...SLACK_LEER, ...SERVIDORES_FUERA, ...WEB_Y_SHELL, ...denegadasExtra,
+		'--setting-sources', 'user,project,local',
+		'--settings', JSON.stringify({
+			enabledPlugins: Object.fromEntries(pluginsUsuario.map(p => [p, false])),
+			autoMemoryEnabled: false,
+			hooks: { PreToolUse: [...hooks().PreToolUse, { matcher: 'Write|Edit|MultiEdit|NotebookEdit', hooks: cerrado(HOOK_ESCRITURA) }] },
+			permissions: { deny: [...denegarLectura(dep), ...denegarEscritura()] },
+		}),
+		'--tools', `${NUCLEO_SALA.filter(x => x !== 'Task').join(',')},Write,Edit${datos ? ',Bash,WebFetch' : ''}`,
+		'--allowedTools', ...ok, 'Write', 'Edit', ...(dep === 'marketing' ? ['mcp__analytics-mcp', 'mcp__google-ads-mcp'] : []), ...(datos ? ['Bash(python3 7-Datos/scripts/*)', 'WebFetch(domain:acme.diy)'] : []),
+		'--disallowedTools', ...ESCRITURA.filter(h => !ok.includes(h)), ...GMAIL_BORRADOR, ...SERVIDORES_FUERA, ...WEB_Y_SHELL.filter(h => !(datos && (h === 'Bash' || h === 'WebFetch'))), ...denegadasExtra.filter(h => !ok.includes(h)),
 		'--append-system-prompt', sistema,
 		...salida(),
 	];
-	if (mcpConfig) args.push('--mcp-config', mcpConfig);
-	if (rol) args.push('--agent', rol);
 	return args;
 }
 
@@ -277,5 +310,23 @@ export function argsCampanaAprobada({ herramienta, prompt }) {
 		'--disallowedTools', ...new Set(todas), ...SERVIDORES_FUERA, 'mcp__analytics-mcp', 'mcp__google-ads-mcp', ...WEB_Y_SHELL,
 		'--no-session-persistence',
 		...salida(),
+	];
+}
+
+// Lo único que puede ejecutar quien hace obras en la oficina: probar, compilar, guardar en su rama e instalar lo que haga falta. Nada de subir ni de red suelta.
+const BASH_OBRA = ['node --test', 'npm test', 'npm install', 'npm run', 'npx vite', 'git status', 'git diff', 'git log', 'git add', 'git commit', 'brew install', 'which', 'ls', 'mkdir'];
+
+/** Nico mejorando la oficina: en su rama, sin conectores ni datos, sin leer lo de los demás. */
+export function argsObra({ prompt, carpeta, sesion = null }) {
+	return [
+		'-p', prompt, '--model', CONFIG.MODELO_A_FONDO,
+		'--setting-sources', 'project',
+		'--strict-mcp-config',
+		'--settings', JSON.stringify({ autoMemoryEnabled: false, permissions: { deny: [...denegarLectura('general'), ...denegarEscritura(), 'Bash(git push:*)', 'Bash(git remote:*)', 'Bash(git config:*)'] } }),
+		'--tools', 'Read,Grep,Glob,Write,Edit,Bash',
+		'--allowedTools', `Read(/${carpeta}/**)`, `Grep(/${carpeta}/**)`, `Glob(/${carpeta}/**)`, `Edit(/${carpeta}/**)`, `Write(/${carpeta}/**)`, ...BASH_OBRA.map(c => `Bash(${c}:*)`), 'Bash(curl -L https://huggingface.co/*)',
+		'--append-system-prompt', `Eres Nico, de tecnología. Mejoras la propia Oficina de Acme, en una rama aparte (${carpeta}): lo que está en marcha no se toca hasta que las pruebas pasen, y eso lo comprueba el servicio. Lee CLAUDE.md y sigue sus reglas. Cambia lo justo, añade pruebas y deja que pasen con node --test. No subas nada a ningún remoto ni toques claves. Si necesitas una clave que no tienes, dilo. Al acabar, dile a Alex en una o dos frases qué ha cambiado, en cristiano.`,
+		...salida(),
+		...(sesion ? ['--resume', sesion] : []),
 	];
 }

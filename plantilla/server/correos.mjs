@@ -123,6 +123,8 @@ ${lecciones?.bloque('correos') ?? ''}`;
 			if (!t || t.tipo !== 'correo') throw new Error('Ese correo no existe');
 			if (t.estado === 'hecha') throw new Error('Ya está decidido');
 			const d = JSON.parse(t.datos);
+			// Desde otro dispositivo con la tarjeta vieja: ya no se puede ni descartar ni cambiar lo que está saliendo.
+			if (accion !== 'aprobar' && (enviando.has(id) || d.enviando)) throw new Error('Ya se está enviando');
 			if (accion === 'descartar') {
 				tareas.accion(id, { accion: 'hecha' });
 				escribeSala(d.desde, `Alex no quiere mandar el correo a ${d.para}: «${d.asunto}».${nota ? ` Dice: ${nota}` : ''}`, { de_sala: 'general:correos' });
@@ -156,10 +158,12 @@ ${lecciones?.bloque('correos') ?? ''}`;
 				enviando.add(id);
 				// Se apunta antes de lanzar: si el Mac se reinicia a medias, no se manda otra vez a ciegas.
 				db.run(`UPDATE tareas SET datos = ?, actualizado = datetime('now') WHERE id = ?`, conDatos({ enviando: true }), id);
+				// Los demás dispositivos también tienen que ver que está saliendo, y que ha vuelto si falla.
+				bus?.emit('evento', { tipo: 'tarea', id });
 				try {
 					let r;
 					try { r = await yo.envia({ ...d, texto: definitivo }, id); }
-					catch (e) { db.run(`UPDATE tareas SET datos = ? WHERE id = ?`, conDatos({ enviando: false }), id); throw e; }
+					catch (e) { db.run(`UPDATE tareas SET datos = ? WHERE id = ?`, conDatos({ enviando: false }), id); bus?.emit('evento', { tipo: 'tarea', id }); throw e; }
 					if (r === 'dudoso') {
 						guarda(SIN_CONFIRMAR);
 						db.apunta('correo_dudoso', `Tarea ${id} a ${d.para}`);
@@ -207,6 +211,12 @@ ${lecciones?.bloque('correos') ?? ''}`;
 			if (otroFallo || (llamo && !rechazo)) return 'dudoso';
 			throw new Error(`No ha salido: ${(rechazo || 'no llegó a enviarlo').slice(0, 160)}`);
 		},
+		/** Un aviso de la oficina a Alex, desde su propia cuenta. Solo a él: el destinatario no lo elige nadie. */
+		async avisaAAlex({ asunto, texto }) {
+			const r = await yo.envia({ hilo: null, para: CONFIG.USUARIO, asunto, texto }, `aviso-${Date.now()}`);
+			if (r !== 'enviado') throw new Error('Sin confirmar');
+		},
+		ocupado: () => enviando.size > 0,
 		/** Lo que se quedó enviando en un reinicio no se manda otra vez: se deja para que él lo mire. */
 		arranca() {
 			for (const t of db.q(`SELECT id, datos FROM tareas WHERE tipo = 'correo' AND estado != 'hecha' AND borrada = 0`)) {

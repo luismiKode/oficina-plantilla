@@ -19,8 +19,8 @@ Manda sobre todos, también sobre Julián. Alex está a alto nivel: la oficina r
 | Dirección general | Julián | Dar tareas a cualquier equipo y a Alex, convocar a cualquiera, pedir el sí de Alex, proponer fichajes y departamentos |
 | Dirección de departamento | Las cinco direcciones | Dar tareas a su equipo y a Alex, convocar reuniones, pedir el sí de Alex |
 | Personas | Pilar | Contratar freelance de la oficina, dar de baja a quien entró así, proponer fijos y departamentos, convocar reuniones. Una persona de verdad de fuera no: eso lo firma y lo paga Alex |
-| Tecnología e infra | Nico | Vigilar que las carpetas de Acme sigan el mapa y decir qué habría que hacer. Lo que tenga commits sin subir le llega a Alex en una tarjeta y se sube al aprobarla, sin forzar. No mueve ni escribe nada |
-| Empleado | El resto | Apuntar tareas en su tablón y pasar recados |
+| Tecnología e infra | Nico | Hacer las mejoras de la propia oficina en su rama: si pasan las pruebas entran solas, y lo que toque permisos o controles pide el sí de Alex. Vigilar que las carpetas de Acme sigan el mapa y decir qué habría que hacer. Lo que tenga commits sin subir le llega a Alex en una tarjeta y se sube al aprobarla, sin forzar. No mueve ni escribe nada |
+| Empleado | El resto | Apuntar tareas en su tablón y pasar recados. Al hacer una tarea, leer sus conexiones y escribir en la carpeta de su departamento, con todo guardado en git |
 | Revisora | Bea | Revisar lo que le llega a Alex. Sin herramientas |
 | Recepción | Tere | Leer correo, agenda y Slack, y repartir |
 | Lean | Rafa | Mirar los números de la oficina, ajustar parámetros dentro de sus márgenes y añadir formas de trabajar. Todo apuntado y se puede deshacer. No toca permisos, este reglamento, los topes ni el código: eso lo propone. Sin herramientas |
@@ -40,7 +40,7 @@ Ante la duda, se sube un nivel.
 
 ## Topes diarios
 
-Alex, 7-nov: que gasten lo que necesiten y las decisiones estén bien tomadas. Todos deciden con Opus. Topes para que nada se desboque, que Rafa vigila: 20 tareas ejecutadas, 10 reuniones convocadas por ellos, 40 avisos por correo, 20 correos propuestos y 3 fichajes. Lo que pase del tope espera al día siguiente. Lo que le llega a Alex sigue con el filtro de Julián.
+Alex, 7-nov: que gasten lo que necesiten y las decisiones estén bien tomadas. Todos deciden con Opus. Topes para que nada se desboque, que Rafa vigila: 10 reuniones convocadas por ellos, 40 avisos por correo, 60 correos propuestos y 3 fichajes. Las tareas no tienen tope: van tres a la vez, una por equipo. Lo que pase del tope espera al día siguiente. Lo que le llega a Alex sigue con el filtro de Julián.
 
 ## Cómo se trabaja
 

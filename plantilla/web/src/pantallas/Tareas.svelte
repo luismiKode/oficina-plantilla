@@ -14,18 +14,34 @@
 		seguro = null;
 		accion(t, { accion: 'aprobar' });
 	};
-	const aprueba = (t, d) => {
+	// El envío tarda hasta dos minutos. La tarjeta lo dice al momento, y `d.enviando` lo mantiene al recargar o desde otro dispositivo.
+	let saliendo = $state({});
+	const aprueba = async (t, d) => {
+		if (saliendo[t.id] || d.enviando) return;
 		if (seguro !== t.id) { seguro = t.id; desde = Date.now(); setTimeout(() => { if (seguro === t.id) seguro = null; }, 6000); return; }
 		// Un doble toque no vale como segundo toque.
 		if (Date.now() - desde < 700) return;
 		seguro = null;
-		accion(t, { accion: 'aprobar', texto: edicion[t.id] ?? d.texto });
+		saliendo[t.id] = true;
+		await accion(t, { accion: 'aprobar', texto: edicion[t.id] ?? d.texto });
+		delete saliendo[t.id];
+		await carga();
 	};
 	let mias = $state({ abiertas: [], hechas: [] }), tablones = $state(null), error = $state(''), nueva = $state(''), abierta = $state(null), verHechas = $state(false), doc = $state(''), avisos = $state('');
+	// Si desaparece lo que se estaba enviando y no se sabe si salió, se dice aquí también: quizá lo aprobó otro dispositivo.
+	const vistosSaliendo = new Map();
+	const miraSaliendo = () => {
+		for (const t of mias.abiertas) if (t.tipo === 'correo' && JSON.parse(t.datos).enviando) vistosSaliendo.set(t.id, JSON.parse(t.datos).para);
+		for (const [id, para] of vistosSaliendo) {
+			if (mias.abiertas.some(t => t.id === id && JSON.parse(t.datos).enviando)) continue;
+			vistosSaliendo.delete(id);
+			if (mias.hechas.find(t => t.id === id)?.resultado?.startsWith('Sin confirmar')) error = `No sé si ha salido el correo a ${para}. Míralo en Enviados antes de repetirlo.`;
+		}
+	};
 	const carga = async () => {
 		try {
 			if (equipo) tablones = await lee('/api/tablones');
-			else mias = await lee('/api/tareas');
+			else { mias = await lee('/api/tareas'); miraSaliendo(); }
 		} catch (e) { error = e.message; }
 	};
 	onMount(() => escucha(e => { if (['tarea', 'conectado'].includes(e.tipo)) carga(); }));
@@ -79,19 +95,20 @@
 				<li class:si={t.tipo !== 'tarea'}>
 					{#if t.tipo === 'correo'}
 						{@const d = JSON.parse(t.datos)}
+						{@const sale = !!saliendo[t.id] || !!d.enviando}
 						<div class="correo">
 							<p class="nota peq">{d.quien} quiere contestar. Lo ha repasado Marga{d.desde?.startsWith('legal') ? '. Desde Legal no sale nada: es para copiar' : ''}.</p>
 							<p class="tit">{d.asunto || 'Sin asunto'}</p>
 							<p class="nota peq">Para {d.para}</p>
 							{#if d.aviso}<p class="aviso-correo">{d.aviso}</p>{/if}
 							{#if enlacesDe(edicion[t.id] ?? d.texto).length}<p class="aviso-correo">Lleva enlaces: {enlacesDe(edicion[t.id] ?? d.texto).join(', ')}</p>{/if}
-							<textarea class="campo" rows={Math.max(6, (edicion[t.id] ?? d.texto).split('\n').reduce((n, l) => n + 1 + Math.floor(l.length / 60), 1))} aria-label="Texto del correo" value={edicion[t.id] ?? d.texto} oninput={e => (edicion[t.id] = e.target.value)}></textarea>
-							<div class="acciones">
-								<button class="boton" onclick={() => aprueba(t, d)}>{seguro === t.id ? `Sí, enviar a ${d.para}` : d.desde?.startsWith('legal') ? 'Aprobar' : 'Aprobar y enviar'}</button>
-								<button class="boton texto" onclick={() => accion(t, { accion: 'descartar' })}>Descartar</button>
+							<textarea class="campo" rows={Math.max(6, (edicion[t.id] ?? d.texto).split('\n').reduce((n, l) => n + 1 + Math.floor(l.length / 60), 1))} aria-label="Texto del correo" disabled={sale} value={edicion[t.id] ?? d.texto} oninput={e => (edicion[t.id] = e.target.value)}></textarea>
+							<div class="acciones" role="status">
+								<button class="boton" disabled={sale} onclick={() => aprueba(t, d)}>{sale ? (d.desde?.startsWith('legal') ? 'Aprobando...' : `Enviando a ${d.para}...`) : seguro === t.id ? `Sí, enviar a ${d.para}` : d.desde?.startsWith('legal') ? 'Aprobar' : 'Aprobar y enviar'}</button>
+								<button class="boton texto" disabled={sale} onclick={() => accion(t, { accion: 'descartar' })}>Descartar</button>
 							</div>
-							<form class="cambiar" onsubmit={e => { e.preventDefault(); accion(t, { accion: 'cambiar', nota: pide[t.id] }); pide[t.id] = ''; }}>
-								<input class="campo" placeholder="Dile a Marga qué cambiar" aria-label="Qué cambiar" value={pide[t.id] ?? ''} oninput={e => (pide[t.id] = e.target.value)} />
+							<form class="cambiar" onsubmit={e => { e.preventDefault(); if (sale) return; accion(t, { accion: 'cambiar', nota: pide[t.id] }); pide[t.id] = ''; }}>
+								<input class="campo" placeholder="Dile a Marga qué cambiar" aria-label="Qué cambiar" disabled={sale} value={pide[t.id] ?? ''} oninput={e => (pide[t.id] = e.target.value)} />
 							</form>
 						</div>
 					{:else if t.tipo === 'campana'}

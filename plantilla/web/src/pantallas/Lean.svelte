@@ -26,7 +26,7 @@
 			<div><dt>Por hacer</dt><dd class="num">{m.tareas.porHacer}</dd></div>
 			<div><dt>Reuniones en cola</dt><dd class="num">{m.reuniones.enCola}</dd></div>
 			<div><dt>Nuevas para ti, 24 h</dt><dd class="num">{m.alex.nuevas24h}</dd></div>
-			<div><dt>Tareas de hoy, tope</dt><dd class="num">{m.topes.tareas[0]} de {m.topes.tareas[1]}</dd></div>
+			<div><dt>Tareas de hoy</dt><dd class="num">{m.topes.tareas[0]}</dd></div>
 			<div><dt>Reuniones de hoy, tope</dt><dd class="num">{m.topes.reuniones[0]} de {m.topes.reuniones[1]}</dd></div>
 			<div><dt>Fallos, 24 h</dt><dd class="num" class:mal={m.fallos.errores24h > 0}>{m.fallos.errores24h}</dd></div>
 		</dl>

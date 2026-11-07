@@ -12,8 +12,8 @@ for (const dep of IDS) {
 		for (const h of permitidas(dep, 'sala')) assert.doesNotMatch(h, ESCRIBE, h);
 	});
 	test(`${dep}: ninguna herramienta permitida en encargo escribe fuera`, () => {
-		for (const h of permitidas(dep, 'encargo')) assert.doesNotMatch(h, ESCRIBE, h);
-		for (const h of permitidas(dep, 'encargo')) assert.doesNotMatch(h, /Gmail|Slack|Drive|Calendar/, h);
+		// Write y Edit van confinados por hook-escritura; lo demás, ni escribe ni sale.
+		for (const h of permitidas(dep, 'encargo')) if (!['Write', 'Edit'].includes(h)) assert.doesNotMatch(h, ESCRIBE, h);
 	});
 	test(`${dep}: sin Bash, Write ni Edit en la sala`, () => {
 		const a = argsSala(dep, { prompt: 'x', sistema: 's' });
@@ -33,8 +33,8 @@ test('nadie toca borradores desde una sala', () => {
 	}
 });
 
-test('En reunión y encargo, Grep y Glob tampoco salen de su carpeta', () => {
-	for (const a of [argsEncargo('fiscal', { prompt: 'x', sistema: 's', carpeta: '/k/f', dirExpediente: '/d' }), argsReunion('fiscal', { prompt: 'x', sistema: 's', carpeta: '/k/f' })]) {
+test('En reunión, Grep y Glob tampoco salen de su carpeta', () => {
+	for (const a of [argsReunion('fiscal', { prompt: 'x', sistema: 's', carpeta: '/k/f' })]) {
 		const ok = lista(a, '--allowedTools');
 		assert.ok(ok.includes('Grep(//k/f/**)') && ok.includes('Glob(//k/f/**)'));
 		assert.ok(!ok.includes('Grep') && !ok.includes('Glob'));
@@ -42,7 +42,7 @@ test('En reunión y encargo, Grep y Glob tampoco salen de su carpeta', () => {
 });
 
 test('Secretos reales denegados', () => {
-	const d = JSON.parse(val(argsSala('finanzas', { prompt: 'x', sistema: 's' }), '--settings')).permissions.deny.join('\n');
+	const d = JSON.parse(val(argsSala('fiscal', { prompt: 'x', sistema: 's' }), '--settings')).permissions.deny.join('\n');
 	for (const p of ['secretos', '.zsh_history', 'Downloads', 'Desktop', '/Volumes', '.codex', 'Documents/Claude']) assert.ok(d.includes(p), p);
 });
 
@@ -74,14 +74,12 @@ test('Sala: apaga los plugins del usuario', () => {
 	assert.match(s.hooks.PreToolUse[0].matcher, /create_draft/);
 });
 
-test('Encargo: sin ajustes de usuario y Write solo en su expediente', () => {
+test('Encargo: lee como en su chat, y escribir pasa por un vigilante que falla cerrado', () => {
 	const a = argsEncargo('fiscal', { prompt: 'x', sistema: 's', carpeta: '/k/fiscal', dirExpediente: '/d/E-1' });
-	assert.equal(val(a, '--setting-sources'), 'project,local');
-	const ok = lista(a, '--allowedTools');
-	assert.ok(ok.includes('Write(//d/E-1/**)'));
-	assert.ok(!ok.includes('Write'));
-	assert.ok(!ok.includes('Read'));
-	assert.ok(ok.includes('Read(//k/fiscal/**)'));
+	assert.equal(val(a, '--setting-sources'), 'user,project,local');
+	const ajustes = JSON.parse(val(a, '--settings'));
+	assert.ok(ajustes.hooks.PreToolUse.some(h => /Write/.test(h.matcher) && /\|\| exit 2/.test(h.hooks[0].command)));
+	assert.ok(lista(a, '--disallowedTools').includes('Bash'));
 });
 
 test('Recepción: solo buscar, leer hilo y calendario, y sin sesión', () => {
