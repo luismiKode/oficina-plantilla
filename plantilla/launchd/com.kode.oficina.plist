@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.miempresa.oficina</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/bin/caffeinate</string>
+		<string>-is</string>
+		<string>/Users/tu-usuario/.nvm/versions/node/v24.14.0/bin/node</string>
+		<string>/RUTA/A/plantilla/server/index.mjs</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/RUTA/A/plantilla</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>OFICINA_REAL</key>
+		<string>1</string>
+		<key>HOME</key>
+		<string>/Users/tu-usuario</string>
+		<key>PATH</key>
+		<string>/Users/tu-usuario/.local/bin:/Users/tu-usuario/.nvm/versions/node/v24.14.0/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/Users/tu-usuario/Library/Logs/oficina.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/tu-usuario/Library/Logs/oficina.log</string>
+</dict>
+</plist>
