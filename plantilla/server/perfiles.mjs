@@ -97,7 +97,7 @@ export function fueraDeLista(herramientas, dep, modo = 'sala') {
 
 function denegarLectura(dep, h = CONFIG.HOME) {
 	const rutas = [
-		'.ssh', '.config', '.aws', '.gnupg', '.mi-erp', '.claude', '.claude-personal', 'Library', 'Fondos',
+		'.ssh', '.config', '.aws', '.gnupg', '.mi-erp', '.claude-personal', 'Library', 'Fondos',
 		'.codex', '.docker', '.cache', '.local', '.nvm', '.npm', 'Downloads', 'Desktop',
 		'Documents/Personal', 'Documents/ClaudePersonal', 'Documents/Claude', 'Documents/Codex',
 	];
@@ -108,6 +108,9 @@ function denegarLectura(dep, h = CONFIG.HOME) {
 	const r = [];
 	for (const t of ['Read', 'Grep', 'Glob']) {
 		for (const p of rutas) r.push(`${t}(/${path.join(h, p)}/**)`);
+		// De ~/.claude solo se puede leer lo que Claude guarda cuando un resultado es largo (tool-results).
+		// Ajustes, credenciales, memorias y conversaciones, no.
+		r.push(`${t}(/${path.join(h, '.claude')}/*.json)`, `${t}(/${path.join(h, '.claude')}/*.jsonl)`, `${t}(/${path.join(h, '.claude')}/.credentials*)`, `${t}(/${path.join(h, '.claude')}/*.md)`, `${t}(/${path.join(h, '.claude')}/history*)`, `${t}(/${path.join(h, '.claude')}/session-env/**)`, `${t}(/${path.join(h, '.claude')}/file-history/**)`, `${t}(/${path.join(h, '.claude')}/ide/**)`, `${t}(/${path.join(h, '.claude')}/statsig/**)`, `${t}(/${path.join(h, '.claude')}/settings*)`, ...['uploads', 'paste-cache', 'sessions', 'backups', 'chrome', 'jobs', 'debug', 'downloads', 'scheduled-tasks', 'state', 'telemetry', 'bridge-spawn', 'cache', 'daemon', 'feedback'].map(c => `${t}(/${path.join(h, '.claude', c)}/**)`), `${t}(/${path.join(h, '.claude')}/projects/**/*.jsonl)`, `${t}(/${path.join(h, '.claude')}/projects/*/memory/**)`, `${t}(/${path.join(h, '.claude')}/plugins/**)`, `${t}(/${path.join(h, '.claude')}/skills/**)`, `${t}(/${path.join(h, '.claude')}/todos/**)`, `${t}(/${path.join(h, '.claude')}/shell-snapshots/**)`);
 		r.push(`${t}(//Volumes/**)`, `${t}(**/.env*)`, `${t}(**/*.pem)`, `${t}(**/*.p12)`, `${t}(**/secretos*)`, `${t}(**/*secret*)`, `${t}(**/*password*)`, `${t}(/${path.join(h, '.zsh_history')})`, `${t}(/${path.join(h, '.bash_history')})`, `${t}(/${path.join(h, '.claude.json')})`, `${t}(/${path.join(CONFIG.DATOS, 'oficina.db')}*)`, `${t}(/${path.join(CONFIG.DATOS, 'vapid.json')})`, `${t}(/${path.join(CONFIG.DATOS, 'erp-mcp.json')})`);
 	}
 	return r;
@@ -214,6 +217,7 @@ export function argsEncargo(dep, { prompt, sistema, carpeta, dirExpediente, mcpC
 			'--disallowedTools', 'Bash', 'NotebookEdit', 'SendMessage', 'CronCreate', 'RemoteTrigger', ...denegadasExtra,
 			'--append-system-prompt', sistema,
 			'--agent', rol,
+			'--no-session-persistence',
 			...salida(),
 		];
 	}
@@ -234,6 +238,8 @@ export function argsEncargo(dep, { prompt, sistema, carpeta, dirExpediente, mcpC
 		'--allowedTools', ...ok, 'Write', 'Edit', ...(dep === 'marketing' ? ['mcp__analytics-mcp', 'mcp__google-ads-mcp'] : []), ...(datos ? ['Bash(python3 7-Datos/scripts/*)', 'WebFetch(domain:acme.diy)'] : []),
 		'--disallowedTools', ...ESCRITURA.filter(h => !ok.includes(h)), ...GMAIL_BORRADOR, ...SERVIDORES_FUERA, ...WEB_Y_SHELL.filter(h => !(datos && (h === 'Bash' || h === 'WebFetch'))), ...denegadasExtra.filter(h => !ok.includes(h)),
 		'--append-system-prompt', sistema,
+		// El resultado queda en su expediente: guardar la conversación entera solo llena el disco.
+		'--no-session-persistence',
 		...salida(),
 	];
 	return args;

@@ -68,7 +68,7 @@ await Promise.all(Array.from({ length: paralelo }, async () => {
 		const c = casos[i];
 		const d = await init(c.args, c.cwd);
 		if (d.error) { resultados[i] = { ...c, error: d.error }; continue; }
-		resultados[i] = { ...c, tools: d.tools, modoPermisos: d.permissionMode, mcp: d.mcp_servers ?? [], fuera: fueraDeLista(d.tools, c.dep, c.modo).filter(t => !(c.deja ?? []).includes(t)), nunca: d.tools.filter(t => NUNCA.test(t) && !(c.modo === 'envio' && t.endsWith('Gmail__send_message')) && !(c.modo === 'encargo-web' && /^Web/.test(t)) && !(c.modo === 'encargo-datos' && /^(Bash|WebFetch)$/.test(t)) && !(c.modo === 'obra' && t === 'Bash' || c.modo === 'obra' && t === 'Edit')) };
+		resultados[i] = { ...c, tools: d.tools, modoPermisos: d.permissionMode, mcp: d.mcp_servers ?? [], fuera: fueraDeLista(d.tools, c.dep, c.modo).filter(t => !(c.deja ?? []).includes(t)), nunca: d.tools.filter(t => NUNCA.test(t) && !(c.modo === 'envio' && t.endsWith('Gmail__send_message')) && !(c.modo === 'encargo-web' && /^Web/.test(t)) && !(c.modo === 'encargo-datos' && /^(Bash|WebFetch)$/.test(t)) && !(c.modo === 'obra' && t === 'Bash' || /^(obra|encargo|encargo-datos)$/.test(c.modo) && t === 'Edit')) };
 	}
 }));
 

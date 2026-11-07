@@ -970,3 +970,17 @@ test('una tarea lee sus conexiones, escribe con el hook y sigue sin poder sacar 
 	const o = argsEncargo('fiscal', { prompt: 'x', sistema: 's', carpeta: '/f', dirExpediente: '/e', rol: 'modelos' });
 	assert.ok(JSON.parse(o[o.indexOf('--settings') + 1]).permissions.deny.some(x => /Desktop/.test(x)));
 });
+
+test('las tareas no guardan su conversación: el resultado ya está en el expediente', () => {
+	for (const rol of ['contable', 'investigador-referencias', 'analista']) assert.ok(argsEncargo('marketing', { prompt: 'x', sistema: 's', carpeta: '/m', dirExpediente: '/e', rol }).includes('--no-session-persistence'), rol);
+});
+
+test('de ~/.claude se leen los resultados largos, y nada más', () => {
+	const a = argsSala('fiscal', { prompt: 'x', sistema: 's' });
+	const d = JSON.parse(a[a.indexOf('--settings') + 1]).permissions.deny;
+	const h = path.join(CONFIG.HOME, '.claude');
+	for (const r of [`Read(/${h}/*.json)`, `Read(/${h}/.credentials*)`, `Read(/${h}/settings*)`, `Read(/${h}/projects/**/*.jsonl)`, `Read(/${h}/projects/*/memory/**)`]) assert.ok(d.includes(r), r);
+	assert.ok(!d.includes(`Read(/${h}/*)`), 'una regla así deniega también las subcarpetas');
+	assert.ok(!d.includes(`Read(/${h}/**)`), 'no toda la carpeta');
+	assert.ok(d.includes(`Read(/${path.join(CONFIG.HOME, '.claude.json')})`));
+});
