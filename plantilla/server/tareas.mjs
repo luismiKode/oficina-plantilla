@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CONFIG } from './config.mjs';
 import { POR_ID, esDepartamento, DEPARTAMENTOS } from './departamentos.mjs';
-import { resuelveHilo, registraAlta } from './equipo.mjs';
+import { resuelveHilo, registraAlta, nombreOcupado, daDeBaja } from './equipo.mjs';
 import { argsEncargo, fueraDeLista, permitidas } from './perfiles.mjs';
 import { ejecuta, ErrorSesionCaducada, ErrorLimite, ErrorPermisos } from './motor.mjs';
 import { pendientes as puntosEstado } from './estado.mjs';
@@ -34,7 +34,7 @@ export function configERP(dirDatos, rutaClaudeJson = path.join(CONFIG.HOME, '.cl
 
 const hoy = () => new Date().toISOString().slice(0, 10);
 
-export function crearTareas({ db, bus, salud, dirDatos = CONFIG.DATOS, bin = CONFIG.CLAUDE_BIN, ejecutor = ejecuta, avisa = () => {}, mcpConfig = null, deps = DEPARTAMENTOS, escribeSala = () => {}, tope = CONFIG.TOPES.tareas, leccionesDe = () => '', alResultado = () => {} }) {
+export function crearTareas({ db, bus, salud, dirDatos = CONFIG.DATOS, bin = CONFIG.CLAUDE_BIN, ejecutor = ejecuta, avisa = () => {}, mcpConfig = null, deps = DEPARTAMENTOS, escribeSala = () => {}, fundador = null, tope = CONFIG.TOPES.tareas, leccionesDe = () => '', alResultado = () => {} }) {
 	let ocupado = false;
 	const emite = id => bus?.emit('evento', { tipo: 'tarea', id });
 	const obtiene = id => db.uno('SELECT * FROM tareas WHERE id = ?', id);
@@ -42,6 +42,14 @@ export function crearTareas({ db, bus, salud, dirDatos = CONFIG.DATOS, bin = CON
 		const k = Object.keys(campos);
 		db.run(`UPDATE tareas SET ${k.map(x => `${x} = ?`).join(', ')}, actualizado = datetime('now') WHERE id = ?`, ...k.map(x => campos[x]), id);
 		emite(id);
+	};
+
+	/** Entra en la plantilla y se queda aunque se reinicie la oficina. */
+	const alta = f => {
+		const hilo = registraAlta(f);
+		db.ajuste('altas', JSON.stringify([...JSON.parse(db.ajuste('altas') || '[]').filter(a => a.nombre !== f.nombre), f]));
+		bus?.emit('evento', { tipo: 'plantilla' });
+		return hilo;
 	};
 
 	const yo = {
@@ -85,10 +93,11 @@ export function crearTareas({ db, bus, salud, dirDatos = CONFIG.DATOS, bin = CON
 			const clave = t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim().slice(0, 60);
 			const vistas = JSON.parse(db.ajuste('filtro_vistos') || '[]');
 			if (vistas.includes(clave)) return null;
-			db.ajuste('filtro_vistos', JSON.stringify([...vistas, clave].slice(-200)));
 			const cuenta = `filtro:${hoy()}`;
 			const n = Number(db.ajuste(cuenta) || 0);
+			// Lo que no entra hoy no se da por visto: mañana puede volver a pedirlo.
 			if (n >= param('FILTRO_DIA')) { db.apunta('tope', `filtro: ${t.slice(0, 120)}`); return null; }
+			db.ajuste('filtro_vistos', JSON.stringify([...vistas, clave].slice(-200)));
 			db.ajuste(cuenta, n + 1);
 			const de = resuelveHilo(desde);
 			escribeSala('general', `${de?.persona.nombre ?? desde} quiere pedirle esto a Alex: «${t}». Tú filtras. Si lo puedes resolver o el dato ya está, díselo. Si de verdad solo puede él, a su lista.`, { de_sala: desde, origen: 'filtro' });
@@ -107,6 +116,8 @@ export function crearTareas({ db, bus, salud, dirDatos = CONFIG.DATOS, bin = CON
 		accion(id, { accion, nota, estado }) {
 			const t = obtiene(id);
 			if (!t || t.borrada) throw new Error('Esa tarea ya no está');
+			// Un correo aprobado no vuelve atrás: reabrirlo permitiría mandarlo dos veces.
+			if (['correo', 'campana', 'subida'].includes(t.tipo) && (accion === 'reabrir' || accion === 'mover')) throw new Error('Lo ya decidido no se puede reabrir');
 			if (accion === 'hecha') toca(id, { estado: 'hecha' });
 			else if (accion === 'reabrir') { toca(id, { estado: 'por_hacer' }); if (t.equipo !== 'alex') yo.siguiente(); }
 			else if (accion === 'borrar') toca(id, { borrada: 1 });
@@ -116,17 +127,46 @@ export function crearTareas({ db, bus, salud, dirDatos = CONFIG.DATOS, bin = CON
 				toca(id, { estado });
 			} else if (accion === 'si' || accion === 'no') {
 				if (t.tipo !== 'si') throw new Error('Esta tarea no pide un sí');
+				if (t.estado === 'hecha') throw new Error('Ya está decidido');
 				const d = t.datos ? JSON.parse(t.datos) : {};
 				toca(id, { estado: 'hecha', resultado: accion === 'si' ? 'Dijiste que sí' : 'Dijiste que no' });
 				let extra = '';
-				if (accion === 'si' && d.fichar) {
-					const hilo = registraAlta(d.fichar);
-					db.ajuste('altas', JSON.stringify([...JSON.parse(db.ajuste('altas') || '[]').filter(a => a.nombre !== d.fichar.nombre), d.fichar]));
-					extra = ` Ya está en la plantilla: ${hilo}.`;
-					bus?.emit('evento', { tipo: 'plantilla' });
+				if (accion === 'si' && d.fichar) extra = ` Ya está en la plantilla: ${alta(d.fichar)}.`;
+				if (accion === 'si' && d.fundar) {
+					try {
+						const f = fundador.funda(d.fundar);
+						extra = ` Ya existe: ${f.ruta}, con su planta y lo dirige ${f.director}. Falta acabar sus agentes desde su puerta.`;
+						bus?.emit('evento', { tipo: 'plantilla' });
+						escribeSala('general:infra', `Se acaba de fundar ${f.nombre} en ${f.ruta}. Mira que todo esté donde dice el mapa.`, { de_sala: 'general:rrhh', saltos: CONFIG.MAX_SALTOS });
+					} catch (e) { db.apunta('fundar', e.message); extra = ` Pero no se ha podido crear: ${e.message}`; }
 				}
 				if (d.hilo) escribeSala(d.hilo, `Alex dice que ${accion === 'si' ? 'sí' : 'no'} a esto: «${t.titulo}».${nota ? ` Añade: ${nota}` : ''}${extra} Sigue tú.`, { de_sala: 'general' });
 			} else throw new Error('Acción desconocida');
+		},
+		/** Lo decide Pilar: un freelance de la oficina solo lee y habla. Con tope al día y sin nombres repetidos. */
+		contrata(f) {
+			if (nombreOcupado(f.nombre)) throw new Error('Ese nombre ya lo tiene alguien');
+			const clave = `fichajes:${hoy()}`;
+			const n = Number(db.ajuste(clave) || 0);
+			if (n >= CONFIG.TOPES.fichajes) throw new Error('Tope de fichajes de hoy');
+			db.ajuste(clave, n + 1);
+			const hilo = alta({ ...f, freelance: true });
+			db.apunta('fichaje', `${f.nombre}, freelance en ${f.dep}: ${hilo}`);
+			return hilo;
+		},
+		daBaja(hilo) {
+			const nombre = daDeBaja(hilo);
+			if (!nombre) return null;
+			db.ajuste('altas', JSON.stringify(JSON.parse(db.ajuste('altas') || '[]').filter(a => a.nombre !== nombre)));
+			db.apunta('fichaje', `Baja de ${nombre}`);
+			bus?.emit('evento', { tipo: 'plantilla' });
+			return nombre;
+		},
+		/** Comprueba la propuesta y le pide el sí a Alex. Fundar nunca va sin él. */
+		proponeFundar(f, desde) {
+			if (!fundador) throw new Error('Aquí no se puede fundar');
+			const d = fundador.valida(f);
+			return yo.crea({ equipo: 'alex', tipo: 'si', prioridad: 'alta', titulo: `Fundar ${d.nombre} en ${d.ruta}. Lo dirigiría ${d.director}. Crea carpeta, mapa, puerta y primer commit local`, detalle: `Se ocupa de: ${d.de}. No es suyo: ${d.noEs || 'sin decir'}. ${d.director}: ${d.caracter}`, origen: 'equipo', datos: { hilo: desde, fundar: d } });
 		},
 		documento(id) {
 			const t = obtiene(id);
@@ -200,6 +240,7 @@ export function crearTareas({ db, bus, salud, dirDatos = CONFIG.DATOS, bin = CON
 		},
 		arranca() {
 			db.run(`UPDATE tareas SET estado = 'por_hacer' WHERE estado = 'en_curso' AND equipo != 'alex'`);
+			try { fundador?.carga(); } catch (e) { db.apunta('error', `fundados: ${e.message}`); }
 			for (const a of JSON.parse(db.ajuste('altas') || '[]')) { try { registraAlta(a); } catch {} }
 			try { yo.sincroniza(); } catch {}
 			yo.siguiente();

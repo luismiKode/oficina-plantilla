@@ -12,7 +12,7 @@ import { leeDecoracion } from './decoracion.mjs';
 import fs from 'node:fs';
 
 /** @param {{db, bus, salas, tareas, reuniones, lecciones, voz, avisos, salud, mirar:Function, dirDatos?:string, deps?:object[], estatico?:string}} o */
-export function crearApp({ db, bus, salas, tareas, lean, correosSalida, reuniones, lecciones, voz, avisos, salud, mirar, dirDatos = CONFIG.DATOS, deps = DEPARTAMENTOS, estatico = null }) {
+export function crearApp({ db, bus, salas, tareas, lean, correosSalida, campanasSalida, subidas, reuniones, lecciones, voz, avisos, salud, mirar, dirDatos = CONFIG.DATOS, deps = DEPARTAMENTOS, estatico = null }) {
 	const app = new Hono();
 	let recepcionTrabajando = false;
 	bus.on('evento', e => { if (e.tipo === 'recepcion') recepcionTrabajando = e.trabajando; });
@@ -55,8 +55,9 @@ export function crearApp({ db, bus, salas, tareas, lean, correosSalida, reunione
 			salud: salud.estado(),
 			saludo: hoy ? JSON.parse(hoy).saludo : null,
 			vapid: avisos?.publica ?? null,
+			hablando: db.uno(`SELECT COUNT(*) AS n FROM mensajes WHERE autor = 'recado' AND estado IN ('pendiente','en_curso')`).n + activas.length,
 			misTareas: db.uno(`SELECT COUNT(*) AS n FROM tareas WHERE equipo = 'alex' AND borrada = 0 AND estado != 'hecha'`).n,
-			sies: db.uno(`SELECT COUNT(*) AS n FROM tareas WHERE equipo = 'alex' AND borrada = 0 AND estado != 'hecha' AND tipo IN ('si', 'correo')`).n,
+			sies: db.uno(`SELECT COUNT(*) AS n FROM tareas WHERE equipo = 'alex' AND borrada = 0 AND estado != 'hecha' AND tipo IN ('si', 'correo', 'campana', 'subida')`).n,
 			correo: co.filter(x => x.urgencia !== 'saber').length,
 			alertas: co.filter(x => x.alerta_dinero).length,
 			listas: listas.map(r => ({ id: r.id, tema: r.tema, titulo: JSON.parse(r.deck)?.titulo })),
@@ -78,15 +79,18 @@ export function crearApp({ db, bus, salas, tareas, lean, correosSalida, reunione
 		if (!h) return c.json({ error: 'Esa sala no existe' }, 404);
 		const id = c.req.param('hilo');
 		const desde = Number(c.req.query('desde') || 0);
+		// El chat es entre Alex y esa persona. Lo que hablan entre ellos está en Charlas.
+		const suyos = `autor != 'recado' AND COALESCE(origen, '') != 'interno'`;
 		const m = desde
-			? db.q('SELECT * FROM mensajes WHERE sala = ? AND id > ? ORDER BY id LIMIT 200', id, desde)
-			: db.q('SELECT * FROM (SELECT * FROM mensajes WHERE sala = ? ORDER BY id DESC LIMIT 80) ORDER BY id', id);
+			? db.q(`SELECT * FROM mensajes WHERE sala = ? AND id > ? AND ${suyos} ORDER BY id LIMIT 200`, id, desde)
+			: db.q(`SELECT * FROM (SELECT * FROM mensajes WHERE sala = ? AND ${suyos} ORDER BY id DESC LIMIT 80) ORDER BY id`, id);
 		const ultimo = m.at(-1)?.id;
 		if (ultimo && ultimo > Number(db.ajuste(`visto:${id}`) || 0)) db.ajuste(`visto:${id}`, ultimo);
 		return c.json({
 			persona: { nombre: h.persona.nombre, cargo: h.persona.cargo, caracter: h.persona.caracter, look: h.persona.look, hilo: id, dep: h.dep, nombreDep: POR_ID[h.dep].nombre },
-			mensajes: m.map(x => ({ ...x, adjuntos: x.adjuntos ? JSON.parse(x.adjuntos).map(a => a.nombre) : [] })),
-			trabajando: salas.trabajando().includes(id),
+			mensajes: m.map(x => ({ ...x, adjuntos: x.adjuntos ? JSON.parse(x.adjuntos).map(a => a.nombre) : [], pasos: x.pasos ? JSON.parse(x.pasos) : null })),
+			vivo: salas.enVivo?.(id) ?? null,
+			trabajando: !!db.uno(`SELECT id FROM mensajes WHERE sala = ? AND estado = 'en_curso' AND autor = 'alex'`, id),
 		});
 	});
 
@@ -107,8 +111,37 @@ export function crearApp({ db, bus, salas, tareas, lean, correosSalida, reunione
 			if (a.size > CONFIG.MAX_ADJUNTO) return c.json({ error: `${a.name} pasa de 30 MB` }, 413);
 			adjuntos.push(guardaAdjunto(dirDatos, a.name, Buffer.from(await a.arrayBuffer())));
 		}
-		const id = salas.escribir(c.req.param('hilo'), texto || 'Mira esto.', { a_fondo: f.a_fondo === '1', adjuntos, origen: f.nota === '1' || f.audio instanceof File ? 'nota' : null });
+		if (texto.length > 100_000) return c.json({ error: 'Demasiado texto para un mensaje' }, 413);
+		// Esto y solo esto es Alex escribiendo: es lo único que abre lo que necesita su palabra.
+		const id = salas.escribir(c.req.param('hilo'), texto || 'Mira esto.', { deAlex: true, a_fondo: f.a_fondo === '1', adjuntos, origen: f.nota === '1' || f.audio instanceof File ? 'nota' : null });
 		return c.json({ id });
+	});
+
+	// Lo que hablan entre ellos, aparte: lo de ahora arriba, y se puede buscar.
+	app.get('/api/charlas', c => {
+		const q = String(c.req.query('q') ?? '').trim().slice(0, 100);
+		const como = `%${q.replace(/[%_]/g, ' ')}%`;
+		const persona = h => { const x = resuelveHilo(h); return x ? { hilo: h, nombre: x.persona.nombre, look: x.persona.look } : { hilo: h, nombre: h, look: null }; };
+		const recados = db.q(`SELECT m.id, m.sala, m.de_sala, m.texto, m.estado, m.creado,
+				(SELECT r.texto FROM mensajes r WHERE r.sala = m.sala AND r.id > m.id AND r.autor = 'sala' AND r.origen = 'interno' ORDER BY r.id LIMIT 1) AS respuesta
+			FROM mensajes m WHERE m.autor = 'recado' ORDER BY m.id DESC LIMIT 300`);
+		const lista = recados.map(m => ({
+			tipo: 'recado', id: m.id, gente: [persona(m.de_sala), persona(m.sala)], texto: m.texto, respuesta: m.respuesta,
+			vivo: ['pendiente', 'en_curso'].includes(m.estado), creado: m.creado,
+		}));
+		const reun = db.q(`SELECT * FROM reuniones ORDER BY id DESC LIMIT 100`).map(r => ({
+			tipo: 'reunion', id: r.id, titulo: r.tema, estado: r.estado, gente: [...new Set([r.convoca, ...JSON.parse(r.asistentes)])].map(persona),
+			vivo: ['preparando', 'mesa', 'redactando', 'revisando'].includes(r.estado), creado: r.creado,
+		}));
+		const coincide = x => {
+			if (!q) return true;
+			const b = q.toLowerCase();
+			if (x.gente.some(g => g.nombre.toLowerCase().includes(b))) return true;
+			if (x.tipo === 'recado') return `${x.texto} ${x.respuesta ?? ''}`.toLowerCase().includes(b);
+			return x.titulo.toLowerCase().includes(b) || !!db.uno(`SELECT id FROM interno WHERE reunion_id = ? AND texto LIKE ? LIMIT 1`, x.id, como);
+		};
+		const todo = [...lista, ...reun].filter(coincide).sort((a, b) => String(b.creado).localeCompare(String(a.creado)) || b.id - a.id);
+		return c.json({ ahora: todo.filter(x => x.vivo), antes: todo.filter(x => !x.vivo).slice(0, 100) });
 	});
 
 	app.post('/api/salas/:hilo/nueva', c => {
@@ -146,6 +179,8 @@ export function crearApp({ db, bus, salas, tareas, lean, correosSalida, reunione
 			}
 			const t = tareas.obtiene(id);
 			if (t?.tipo === 'correo' && ['aprobar', 'cambiar', 'descartar'].includes(b.accion)) await correosSalida.decide(id, b);
+			else if (t?.tipo === 'campana' && ['aprobar', 'descartar'].includes(b.accion)) await campanasSalida.decide(id, b);
+			else if (t?.tipo === 'subida' && ['aprobar', 'descartar'].includes(b.accion)) await subidas.decide(id, b);
 			else tareas.accion(id, b);
 		} catch (e) { return c.json({ error: e.message }, 409); }
 		return c.json({ ok: true });

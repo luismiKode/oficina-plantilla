@@ -4,6 +4,7 @@ import path from 'node:path';
 import { CONFIG } from './config.mjs';
 import { POR_ID } from './departamentos.mjs';
 import { fileURLToPath } from 'node:url';
+import { META_FUERA } from './meta-fuera.mjs';
 
 const G = 'mcp__claude_ai_Gmail__', C = 'mcp__claude_ai_Google_Calendar__', D = 'mcp__claude_ai_Google_Drive__';
 const S = 'mcp__claude_ai_Slack__', E = 'mcp__mi-erp__', M = 'mcp__meta-ads__';
@@ -11,6 +12,7 @@ const S = 'mcp__claude_ai_Slack__', E = 'mcp__mi-erp__', M = 'mcp__meta-ads__';
 const GMAIL_LEER = ['search_threads', 'get_thread', 'get_message', 'list_labels'].map(x => G + x);
 // Solo crear: leer o editar borradores dejaría cambiar uno que Alex tiene a medias, sin que se entere.
 const GMAIL_BORRADOR = ['create_draft'].map(x => G + x);
+const GMAIL_ENVIAR = G + 'send_message';
 const GMAIL_BORRADORES_FUERA = ['update_draft', 'list_drafts', 'get_draft'].map(x => G + x);
 const CALENDARIO_LEER = ['list_events', 'get_event', 'list_calendars', 'search_events'].map(x => C + x);
 const DRIVE_LEER = ['search_files', 'read_file_content', 'get_file_metadata', 'list_recent_files'].map(x => D + x);
@@ -19,13 +21,19 @@ const ERP_LEER = ['resumen', 'tesoreria', 'movimientos', 'facturas', 'factura', 
 // Las de lectura que ya usa el equipo de Marketing en sus agentes
 const META_LEER = ['ads_get_ad_entities', 'ads_get_creatives', 'ads_get_custom_audience', 'ads_get_dataset_stats', 'ads_get_datasets', 'ads_get_field_context', 'ads_get_ig_accounts', 'ads_get_ad_videos', 'ads_account_get_activity_logs'].map(x => M + x);
 
+// Lo que Lucía y Marco pueden preparar y Alex aprobar: crear, modificar, pausar y activar. Borrar, píxeles, catálogo y listas de clientes, no.
+export const META_CAMPANAS = ['ads_activate_entity', 'ads_update_entity', 'ads_create_campaign', 'ads_create_ad_set', 'ads_create_ad', 'ads_create_creative', 'ads_creative_update', 'ads_creative_update_image_elements', 'ads_creative_create_image_variations', 'ads_creative_upload_media', 'ads_boost_ig_post', 'ads_experiment_abtest_create_test', 'ads_experiment_abtest_update_test'].map(x => M + x);
+/** Quién puede preparar cambios de campaña. El resto de Marketing lee. */
+export const puedeCampanas = hilo => hilo === 'marketing' || hilo === 'marketing:medios';
+
 // Lo que se deniega por nombre para que ni aparezca (ahorra contexto y es la primera barrera).
 // Lo que se escape, lo caza la auditoría del motor en el `init` de cada turno.
 const ESCRITURA = [
+	...META_FUERA,
 	...GMAIL_BORRADORES_FUERA,
 	...['send_message', 'reply', 'forward', 'trash_message', 'trash_thread', 'untrash_message', 'untrash_thread', 'delete_draft', 'create_label', 'update_label', 'delete_label', 'label_message', 'label_thread', 'unlabel_message', 'unlabel_thread', 'update_message_labels', 'mark_message_spam', 'mark_thread_spam', 'unmark_message_spam', 'unmark_thread_spam', 'apply_sensitive_message_label', 'apply_sensitive_thread_label'].map(x => G + x),
 	...['create_event', 'delete_event', 'update_event', 'respond_to_event', 'suggest_time'].map(x => C + x),
-	...['copy_file', 'create_file', 'share_file', 'trash_file', 'update_file', 'download_file_content', 'get_file_permissions'].map(x => D + x),
+	...['copy_file', 'create_file', 'share_file', 'trash_file', 'update_file', 'download_file_content', 'get_file_permissions', 'add_comment_reply', 'resolve_comment_thread', 'request_access', 'get_shared_drive_metadata', 'list_shared_drives'].map(x => D + x),
 	...['slack_send_message', 'slack_send_message_draft', 'slack_schedule_message', 'slack_create_canvas', 'slack_update_canvas'].map(x => S + x),
 	...['alta_factura_recibida', 'analizar_extracto', 'categorizar_movimiento', 'conciliar_factura', 'crear_escenario', 'crear_regla', 'fijar_presupuesto', 'importar_extracto'].map(x => E + x),
 ];
@@ -58,7 +66,7 @@ function argsMundo({ prompt, sistema, sesion = null, modelo = CONFIG.MODELO, dir
 function lecturaMarketing(dep) { return dep === 'marketing' ? META_LEER : []; }
 
 // Prefijos completos permitidos en Marketing (GA4 y consulta de Google Ads solo leen).
-function prefijoPermitido(dep, herramienta) {
+function prefijoPermitido(dep, herramienta, modo = 'sala') {
 	return dep === 'marketing' && (herramienta.startsWith('mcp__analytics-mcp__') || (herramienta.startsWith('mcp__google-ads-mcp__') && !/mutate|create|update|delete|remove|set_/i.test(herramienta)));
 }
 
@@ -67,6 +75,8 @@ export function permitidas(dep, modo = 'sala') {
 	if (modo === 'recepcion') return new Set([G + 'search_threads', G + 'get_thread', C + 'list_events', S + 'slack_search_public_and_private', S + 'slack_read_thread', 'StructuredOutput']);
 	if (modo === 'texto') return new Set(['StructuredOutput']);
 	if (modo === 'borrador') return new Set(GMAIL_BORRADOR);
+	if (modo === 'envio') return new Set([GMAIL_ENVIAR]);
+	if (modo === 'campana-aprobada') return new Set();
 	if (modo === 'reunion') return new Set(['Read', 'Grep', 'Glob', 'Agent', 'Task', 'StructuredOutput', ...ERP_LEER, ...lecturaMarketing(dep)]);
 	if (modo === 'encargo') return new Set([...NUCLEO_SALA.filter(x => x !== 'Skill'), 'Write', ...ERP_LEER, ...lecturaMarketing(dep)]);
 	const d = POR_ID[dep];
@@ -79,7 +89,7 @@ export function permitidas(dep, modo = 'sala') {
 /** Lo que aparece en el `init` y no está permitido. */
 export function fueraDeLista(herramientas, dep, modo = 'sala') {
 	const ok = permitidas(dep, modo);
-	return herramientas.filter(h => !ok.has(h) && !prefijoPermitido(dep, h));
+	return herramientas.filter(h => !ok.has(h) && !prefijoPermitido(dep, h, modo));
 }
 
 function denegarLectura(dep, h = CONFIG.HOME) {
@@ -98,7 +108,15 @@ function denegarLectura(dep, h = CONFIG.HOME) {
 
 /** Ajustes en línea: apaga plugins y hooks globales y añade lo denegado. */
 const HOOK_BORRADOR = fileURLToPath(new URL('./hook-borrador.mjs', import.meta.url));
-const hooks = () => ({ PreToolUse: [{ matcher: GMAIL_BORRADOR[0], hooks: [{ type: 'command', command: `"${process.execPath}" "${HOOK_BORRADOR}"` }] }] });
+// `|| exit 2`: un hook que se rompe (nvm actualizado, error de sintaxis) bloquea en vez de dejar pasar.
+const cerrado = ruta => [{ type: 'command', command: `"${process.execPath}" "${ruta}" || exit 2` }];
+const HOOK_PRIVADO = fileURLToPath(new URL('./hook-privado.mjs', import.meta.url));
+export const HOOK_ENVIO = fileURLToPath(new URL('./hook-envio.mjs', import.meta.url));
+export const HOOK_CAMPANA = fileURLToPath(new URL('./hook-campanas.mjs', import.meta.url));
+const hooks = () => ({ PreToolUse: [
+	{ matcher: GMAIL_BORRADOR[0], hooks: cerrado(HOOK_BORRADOR) },
+	{ matcher: G + 'search_threads', hooks: cerrado(HOOK_PRIVADO) },
+] });
 // Por si Claude guardase memoria automática: esa carpeta la leen las puertas, que tienen terminal.
 const denegarEscritura = () => [`Edit(/${path.join(CONFIG.HOME, '.claude')}/**)`, `Write(/${path.join(CONFIG.HOME, '.claude')}/**)`];
 
@@ -216,6 +234,47 @@ export function argsBorrador({ prompt, pluginsUsuario = [] }) {
 		'--tools', '',
 		'--allowedTools', ...GMAIL_BORRADOR,
 		'--disallowedTools', ...todas, ...SERVIDORES_FUERA, ...WEB_Y_SHELL,
+		'--no-session-persistence',
+		...salida(),
+	];
+}
+
+/** Enviar un correo que Alex ha aprobado: solo esa herramienta, nada que leer, y un hook que compara con lo aprobado. */
+export function argsEnvio({ prompt, pluginsUsuario = [] }) {
+	const todas = [...GMAIL_LEER, ...CALENDARIO_LEER, ...DRIVE_LEER, ...SLACK_LEER, ...ERP_LEER, ...GMAIL_BORRADOR, ...ESCRITURA.filter(h => h !== GMAIL_ENVIAR)];
+	return [
+		'-p', prompt, '--model', 'haiku',
+		'--setting-sources', 'user',
+		'--settings', JSON.stringify({
+			enabledPlugins: Object.fromEntries(pluginsUsuario.map(p => [p, false])),
+			autoMemoryEnabled: false,
+			hooks: { PreToolUse: [{ matcher: GMAIL_ENVIAR, hooks: cerrado(HOOK_ENVIO) }] },
+			permissions: { deny: [...denegarLectura('general'), ...denegarEscritura()] },
+		}),
+		'--tools', '',
+		'--allowedTools', GMAIL_ENVIAR,
+		'--disallowedTools', ...todas, ...SERVIDORES_FUERA, ...WEB_Y_SHELL,
+		'--no-session-persistence',
+		...salida(),
+	];
+}
+
+/** Hacer la única llamada que Alex ha aprobado: esa herramienta y nada más, y un hook que la compara con lo aprobado. */
+export function argsCampanaAprobada({ herramienta, prompt }) {
+	if (!META_CAMPANAS.includes(herramienta)) throw new Error('Esa herramienta no se puede usar');
+	const todas = [...META_LEER, ...META_FUERA, ...GMAIL_LEER, ...CALENDARIO_LEER, ...DRIVE_LEER, ...SLACK_LEER, ...ERP_LEER, ...GMAIL_BORRADOR, ...ESCRITURA].filter(h => h !== herramienta);
+	return [
+		'-p', prompt, '--model', 'haiku',
+		// Sin los ajustes del usuario: dan permisos sueltos que aquí no pintan nada.
+		'--setting-sources', 'project,local',
+		'--settings', JSON.stringify({
+			autoMemoryEnabled: false,
+			hooks: { PreToolUse: [{ matcher: herramienta, hooks: cerrado(HOOK_CAMPANA) }] },
+			permissions: { deny: [...denegarLectura('marketing'), ...denegarEscritura()] },
+		}),
+		'--tools', '',
+		'--allowedTools', herramienta,
+		'--disallowedTools', ...new Set(todas), ...SERVIDORES_FUERA, 'mcp__analytics-mcp', 'mcp__google-ads-mcp', ...WEB_Y_SHELL,
 		'--no-session-persistence',
 		...salida(),
 	];

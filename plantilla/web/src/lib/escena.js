@@ -14,6 +14,9 @@ const PLANTAS = {
 	vestibulo: { nombre: 'Recepción', pared: '#8a7a64', oscura: '#756752', suelo1: '#d8d0c0', suelo2: '#cbc3b3', vestibulo: true },
 };
 const ORDEN = ['general', 'marketing', 'produccion', 'finanzas', 'fiscal', 'legal', 'reuniones', 'vestibulo'];
+// Un departamento recién fundado entra encima de la sala de reuniones, con su color hasta que decore.
+const COLORES_NUEVOS = [['#5a4a8a', '#4b3d75'], ['#8a6a2f', '#745826'], ['#2f6f6a', '#265c58'], ['#8a4a6a', '#743d58']];
+const plantaNueva = (nombre, i) => ({ nombre, pared: COLORES_NUEVOS[i % 4][0], oscura: COLORES_NUEVOS[i % 4][1], suelo1: '#b9a58a', suelo2: '#ad997e' });
 // Lo que pueden elegir (server/decoracion.mjs)
 const PARED = { vino: ['#7f3333', '#6b2a2a'], burdeos: ['#5c1f3a', '#4a1830'], rosa: ['#a84d6f', '#8f3f5d'], naranja: ['#c9702e', '#ad5f24'], mostaza: ['#c98a2e', '#ad7524'], verde: ['#3f7f5f', '#346b4f'], oliva: ['#6b7a3a', '#5a682f'], turquesa: ['#2f7f8f', '#276b79'], azul: ['#35558f', '#2c4779'], noche: ['#3b2f4a', '#2e2439'], grafito: ['#3f444d', '#343840'], crema: ['#c9bda0', '#b5a98c'] };
 const SUELO = { madera: ['#c9a67e', '#bd9a72'], roble: ['#8f6a42', '#835f39'], nogal: ['#6b4a32', '#5f412c'], baldosa: ['#d8d0c0', '#cbc3b3'], industrial: ['#8c8f94', '#7f8287'], moqueta: ['#5a6478', '#505a6c'], verde: ['#6f8f6a', '#63825f'], terracota: ['#b5714a', '#a86640'] };
@@ -96,8 +99,10 @@ export function crearEscena(canvas, { alCambiar = () => {} } = {}) {
 		let y = 0;
 		const ant = actores;
 		const nuevos = new Map();
-		plantas = ORDEN.map((id, f) => {
-			const def = PLANTAS[id];
+		const nuevas = oficina.salas.filter(s => !PLANTAS[s.id]);
+		const orden = [...ORDEN.slice(0, -2), ...nuevas.map(s => s.id), ...ORDEN.slice(-2)];
+		plantas = orden.map((id, f) => {
+			const def = PLANTAS[id] ?? plantaNueva(salaDe(id).nombre, nuevas.findIndex(s => s.id === id));
 			let gente = [];
 			if (id === 'general') gente = salaDe('general').personas.filter(p => p.rol !== 'recepcion');
 			else if (id === 'vestibulo') gente = salaDe('general').personas.filter(p => p.rol === 'recepcion');
@@ -378,7 +383,8 @@ export function crearEscena(canvas, { alCambiar = () => {} } = {}) {
 		r(g, eje - 1, y - 7, 14, 8, '#3a3346');
 		if (sentado) {
 			const teclea = a.trabajando || (t + x) % 40 < 25;
-			cuerpoSentado(g, a.look, eje, y - 16 + (teclea && t % 4 < 2 ? 1 : 0), (t + x * 7) % 60 === 0);
+			const salto = a.saludo > 0 ? [0, -2, -3, -2][(a.saludo--) % 4] : 0;
+			cuerpoSentado(g, a.look, eje, y - 16 + salto + (teclea && t % 4 < 2 ? 1 : 0), (t + x * 7) % 60 === 0);
 		}
 		r(g, x0 + 2, y + 18, w, 2, '#0003');
 		r(g, x0, y, w, 4, '#b98a55'); r(g, x0, y, w, 1, '#d6a874'); r(g, x0, y + 4, w, 14, '#8f6a42');
@@ -476,6 +482,11 @@ export function crearEscena(canvas, { alCambiar = () => {} } = {}) {
 			if (!reloj) bucle();
 		},
 		recado,
+		/** Alguien te ha mirado: da un saltito en su silla. */
+		saluda(hilo) {
+			const a = actores.get(hilo);
+			if (a && !quieto) a.saludo = 12;
+		},
 		/** Dónde está cada cosa, para poner encima botones y nombres con su texto. */
 		plano() {
 			return {

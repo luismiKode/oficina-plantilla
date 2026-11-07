@@ -19,3 +19,14 @@ export const DEPARTAMENTOS = [
 export const POR_ID = Object.fromEntries(DEPARTAMENTOS.map(d => [d.id, d]));
 export const IDS = DEPARTAMENTOS.map(d => d.id);
 export const esDepartamento = id => Object.hasOwn(POR_ID, id);
+
+/** Un departamento fundado desde la Oficina. Se vuelve a cargar al arrancar. */
+export function registraDepartamento({ id, nombre, carpeta, de, correo = '' }) {
+	if (esDepartamento(id)) return POR_ID[id];
+	const d = { id, nombre, carpeta, borradores: true, de, correo: correo || nombre };
+	// Antes de Dirección general, que siempre va la última.
+	DEPARTAMENTOS.splice(DEPARTAMENTOS.length - 1, 0, d);
+	POR_ID[id] = d;
+	IDS.splice(IDS.length - 1, 0, id);
+	return d;
+}

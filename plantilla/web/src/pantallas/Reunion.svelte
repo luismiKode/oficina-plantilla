@@ -20,7 +20,8 @@
 	const enDecision = $derived(deck && i === n);
 	const FASES = [['preparando', 'Cada uno prepara su aporte'], ['mesa', 'Lo hablan en la mesa'], ['redactando', 'Se redacta la presentación'], ['revisando', 'Bea la revisa'], ['lista', 'Te avisan']];
 	const faseN = $derived(FASES.findIndex(f => f[0] === r?.estado));
-	const participantes = $derived(r ? [r.convoca, ...r.asistentes] : []);
+	// Quien convoca suele asistir también: cada persona, una vez.
+	const participantes = $derived(r ? [r.convoca, ...r.asistentes].filter((a, k, t) => t.findIndex(x => x.hilo === a.hilo) === k) : []);
 
 	function detiene() { audio?.pause(); contando = false; cargandoVoz = false; }
 	function ve(x) { detiene(); i = Math.max(-1, Math.min(n, x)); }
@@ -51,8 +52,11 @@
 	}
 	const tecla = e => {
 		if (!lista) return;
-		if (e.key === 'ArrowRight') ve(i + 1);
-		if (e.key === 'ArrowLeft') ve(i - 1);
+		if (e.target?.tagName === 'INPUT') return;
+		if (e.key === 'ArrowRight') { e.preventDefault(); ve(i + 1); }
+		if (e.key === 'ArrowLeft') { e.preventDefault(); ve(i - 1); }
+		// Espacio cuenta la reunión, salvo si estás sobre un botón: entonces lo pulsa.
+		if (e.key === ' ' && r?.hayVoz && !['BUTTON', 'A'].includes(document.activeElement?.tagName)) { e.preventDefault(); cuenta(); }
 	};
 	async function accion(cuerpo) {
 		error = '';
@@ -73,7 +77,7 @@
 		<a class="salir" href="#/reuniones">Salir</a>
 		{#if lista}
 			<div class="tramos" aria-label="Diapositiva {i + 2} de {n + 2}">
-				{#each Array(n + 2) as _, k}<button class:hecho={k <= i + 1} onclick={() => ve(k - 1)} aria-label="Ir a la diapositiva {k + 1}"></button>{/each}
+				{#each Array(n + 2) as _, k}<button data-sin-parada class:hecho={k <= i + 1} onclick={() => ve(k - 1)} aria-label="Ir a la diapositiva {k + 1}"></button>{/each}
 			</div>
 		{/if}
 		<button class="boton texto" onclick={() => (verChat = !verChat)} aria-expanded={verChat}>{verChat ? 'Volver' : 'Lo hablado'}</button>

@@ -20,7 +20,7 @@ test('nombres únicos: nadie se llama Dirección ni agente', () => {
 
 test('cada uno tiene nivel, cargo, carácter y forma de hablar', () => {
 	for (const p of todos) {
-		assert.ok(['dg', 'direccion', 'empleado', 'revisora', 'recepcion', 'correos', 'lean'].includes(p.nivel), p.nombre);
+		assert.ok(['dg', 'direccion', 'empleado', 'revisora', 'recepcion', 'correos', 'lean', 'rrhh', 'infra'].includes(p.nivel), p.nombre);
 		for (const c of ['cargo', 'caracter', 'habla']) assert.ok(p[c]?.length > 3, `${p.nombre} ${c}`);
 		for (const c of ['pelo', 'colorPelo', 'piel', 'ropa', 'pantalla']) assert.ok(p.look[c], `${p.nombre} ${c}`);
 	}

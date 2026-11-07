@@ -85,6 +85,35 @@ test('mensajes: escribe, contesta y marca leído', async () => {
 	assert.equal(of.salas[0].personas[0].sinLeer, 0);
 });
 
+test('el chat es solo entre Alex y esa persona; lo demás, en Charlas', async () => {
+	const { pide, db } = monta();
+	db.run(`INSERT INTO mensajes (sala, autor, texto) VALUES ('general', 'alex', 'Hola Julián')`);
+	db.run(`INSERT INTO mensajes (sala, autor, texto) VALUES ('general', 'sala', 'Dime')`);
+	db.run(`INSERT INTO mensajes (sala, autor, texto, de_sala) VALUES ('general', 'recado', 'Ramiro te pide la fecha de la fábrica', 'produccion')`);
+	db.run(`INSERT INTO mensajes (sala, autor, texto, origen) VALUES ('general', 'sala', 'Te la paso, Ramiro', 'interno')`);
+	const chat = await (await pide('/api/salas/general/mensajes')).json();
+	assert.deepEqual(chat.mensajes.map(m => m.texto), ['Hola Julián', 'Dime']);
+	const nuevos = await (await pide('/api/salas/general/mensajes?desde=2')).json();
+	assert.equal(nuevos.mensajes.length, 0);
+	const c = await (await pide('/api/charlas')).json();
+	assert.equal(c.antes[0].texto, 'Ramiro te pide la fecha de la fábrica');
+	assert.equal(c.antes[0].respuesta, 'Te la paso, Ramiro');
+	assert.deepEqual(c.antes[0].gente.map(g => g.nombre), ['Ramiro', 'Julián']);
+	assert.equal((await (await pide('/api/charlas?q=f%C3%A1brica')).json()).antes.length, 1);
+	assert.equal((await (await pide('/api/charlas?q=julian-no')).json()).antes.length, 0);
+	assert.equal((await (await pide('/api/charlas?q=Ramiro')).json()).antes.length, 1);
+});
+
+test('lo que están hablando ahora sale arriba, y Julián no parece ocupado contigo', async () => {
+	const { pide, db } = monta();
+	db.run(`INSERT INTO mensajes (sala, autor, texto, de_sala, estado) VALUES ('general', 'recado', 'Urgente', 'fiscal', 'en_curso')`);
+	const c = await (await pide('/api/charlas')).json();
+	assert.equal(c.ahora.length, 1);
+	assert.equal(c.ahora[0].vivo, true);
+	assert.equal((await (await pide('/api/salas/general/mensajes')).json()).trabajando, false);
+	assert.equal((await (await pide('/api/oficina')).json()).hablando, 1);
+});
+
 test('sala inventada: 404; mensaje vacío: 400', async () => {
 	const { pide } = monta();
 	assert.equal((await pide('/api/salas/nadie/mensajes')).status, 404);

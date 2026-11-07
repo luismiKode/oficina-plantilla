@@ -38,7 +38,7 @@ export function crearSalud({ bin = CONFIG.CLAUDE_BIN, bus, alRecuperar = () => {
 	let sesion = 'ok', limite = null, expira = null;
 	const cambia = () => bus?.emit('evento', { tipo: 'salud' });
 	const yo = {
-		ok() { const antes = sesion; sesion = 'ok'; limite = null; if (antes !== 'ok') { cambia(); alRecuperar(); } },
+		ok() { const antes = sesion, habiaLimite = limite; sesion = 'ok'; limite = null; if (antes !== 'ok' || habiaLimite) { cambia(); alRecuperar(); } },
 		caducada() { if (sesion !== 'caducada') { sesion = 'caducada'; cambia(); } },
 		limite() { limite = new Date().toISOString(); cambia(); },
 		estado: () => ({ sesion, limite, expira }),

@@ -25,13 +25,48 @@ const NADA = () => [];
 let alUso = null;
 /** Se avisa de cada ejecución acabada, para medir lo que se gasta. */
 export function registraUso(fn) { alUso = fn; }
-export function ejecuta({ bin, args, cwd, env = {}, auditar = NADA, alEvento = () => {}, tiempoMax = 300_000 }) {
+
+// El ERP se cae si varios se conectan a la vez (8 de cada 12 arranques con cuatro a la vez, ninguno en fila):
+// los arranques van de uno en uno, y lo que se haga después ya va en paralelo.
+let ultimoArranque = Promise.resolve();
+function turnoDeArranque() {
+	let libre;
+	const anterior = ultimoArranque;
+	ultimoArranque = new Promise(r => { libre = r; });
+	return anterior.then(() => libre);
+}
+const CAIDA_REINTENTO_MS = 4000;
+export class ErrorConexion extends Error { constructor(caidas) { super(`Sin conexión con ${caidas.join(', ')}`); this.name = 'ErrorConexion'; this.caidas = caidas; } }
+
+/** Lanza a Claude. Si una conexión falla al arrancar, antes de gastar nada, lo reintenta; a la tercera sigue sin ella y lo avisa. */
+export async function ejecuta(o) {
+	for (let i = 0; ; i++) {
+		try { return await lanza({ ...o, pararSiCaida: i < 2 }); }
+		catch (e) {
+			if (!(e instanceof ErrorConexion)) throw e;
+			await new Promise(r => setTimeout(r, CAIDA_REINTENTO_MS));
+		}
+	}
+}
+
+async function lanza({ bin, args: crudos, cwd, env = {}, auditar = NADA, alEvento = () => {}, tiempoMax = 300_000, pararSiCaida = false, arranqueMs = 1500, exige = null }) {
+	// Un carácter nulo o un texto enorme hacen fallar a spawn en el acto: se limpian antes de hacer cola.
+	const args = crudos.map(a => String(a).replace(/\0/g, ''));
+	if (args.reduce((n, a) => n + a.length, 0) > 800_000) throw new Error('Demasiado texto para un turno');
+	const libera = await turnoDeArranque();
 	// El modo de permisos tiene que ser el pedido: si no, el global del usuario lo saltaría todo.
 	const iModo = args.indexOf('--permission-mode');
 	const modoPedido = iModo >= 0 ? args[iModo + 1] : null;
 	return new Promise((resolve, reject) => {
 		const t0 = Date.now();
-		const hijo = spawn(bin, args, { cwd, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+		let hijo;
+		try { hijo = spawn(bin, args, { cwd, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] }); }
+		catch (e) { libera(); reject(e); return; }
+		// Pasa el siguiente cuando este ya ha conectado, o como mucho a los 15 s.
+		const reloj0 = setTimeout(libera, 15_000);
+		reloj0.unref?.();
+		const sueltaArranque = (ms = 0) => { clearTimeout(reloj0); if (ms) { const t = setTimeout(libera, ms); t.unref?.(); } else libera(); };
+		let falloDuro = false;
 		let resto = '', err = '', final = null, sesion = null, abortado = null, porTiempo = false, huboInit = false, acabado = false;
 		const mata = () => { hijo.kill('SIGKILL'); };
 		let remate;
@@ -50,30 +85,48 @@ export function ejecuta({ bin, args, cwd, env = {}, auditar = NADA, alEvento = (
 			if (d.type === 'system' && d.subtype === 'init') {
 				huboInit = true;
 				if (modoPedido && d.permissionMode && d.permissionMode !== modoPedido) { abortado = new ErrorPermisos([`modo de permisos ${d.permissionMode}`]); return mata(); }
+				sueltaArranque(arranqueMs);
+				const caidas = (d.mcp_servers || []).filter(s => s.status === 'failed' && !/playwright|notion|docs/i.test(s.name)).map(s => s.name);
+				if (caidas.length && pararSiCaida) { abortado = new ErrorConexion(caidas); return mata(); }
+				// Lo que este turno no puede hacer sin ella: mejor fallar que dar un resultado vacío por bueno.
+				const faltan = (exige ?? []).filter(h => !(d.tools || []).includes(h));
+				if (faltan.length) { abortado = new ErrorConexion(faltan); falloDuro = !pararSiCaida; return mata(); }
+				if (caidas.length) alEvento({ tipo: 'conexion', caidas });
 				const extras = auditar(d.tools || []);
 				if (extras.length) { abortado = new ErrorPermisos(extras); mata(); }
 			} else if (d.type === 'stream_event') {
 				const b = d.event?.content_block;
-				if (d.event?.type === 'content_block_start' && b?.type === 'text') alEvento({ tipo: 'escribe' });
-				if (d.event?.type === 'content_block_start' && b?.type === 'thinking') alEvento({ tipo: 'piensa' });
+				if (d.event?.type === 'content_block_start' && b?.type === 'text') alEvento({ tipo: 'escribe', padre: d.parent_tool_use_id ?? null });
+				if (d.event?.type === 'content_block_start' && b?.type === 'thinking') alEvento({ tipo: 'piensa', padre: d.parent_tool_use_id ?? null });
 			} else if (d.type === 'assistant') {
 				for (const c of d.message?.content || []) {
 					if (c.type !== 'tool_use') continue;
 					// Un subagente no se sale a otro sitio, ni a la nube ni a otra copia del repo.
 					if ((c.name === 'Agent' || c.name === 'Task') && c.input?.isolation) { abortado = new ErrorPermisos(['Agent con isolation']); return mata(); }
-					alEvento({ tipo: 'herramienta', herramienta: c.name, entrada: c.input });
+					// El init solo lista lo ya conectado: lo que llegue después se caza aquí.
+					const fuera = auditar([c.name]);
+					if (fuera.length) { abortado = new ErrorPermisos(fuera); return mata(); }
+					alEvento({ tipo: 'herramienta', herramienta: c.name, entrada: c.input, id: c.id, padre: d.parent_tool_use_id ?? null });
+				}
+			} else if (d.type === 'user') {
+				for (const c of d.message?.content || []) {
+					if (c.type === 'tool_result') alEvento({ tipo: 'resultado', error: !!c.is_error, texto: typeof c.content === 'string' ? c.content : c.content?.[0]?.text ?? '' });
 				}
 			} else if (d.type === 'result') final = d;
 		};
+		hijo.stdout.setEncoding('utf8');
+		hijo.stderr.setEncoding('utf8');
 		hijo.stdout.on('data', t => {
 			resto += t;
 			let i;
 			while ((i = resto.indexOf('\n')) >= 0) { const l = resto.slice(0, i).trim(); resto = resto.slice(i + 1); if (l) linea(l); }
 		});
 		hijo.stderr.on('data', t => { err += t; });
-		hijo.on('error', e => { fin(() => reject(e)); });
+		hijo.on('error', e => { sueltaArranque(); fin(() => reject(e)); });
 		hijo.on('close', code => fin(() => {
+			sueltaArranque();
 			if (resto.trim()) linea(resto.trim());
+			if (abortado && falloDuro) return reject(new Error(abortado.message));
 			if (abortado) return reject(abortado);
 			if (porTiempo) return reject(new Error('Se ha pasado de tiempo'));
 			if (final && !final.is_error) {

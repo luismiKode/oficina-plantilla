@@ -9,9 +9,11 @@ export const EQUIPO = {
 	general: [
 		k('Julián', null, 'dg', 'Director general', 'Directo, de pocas palabras y mucha experiencia. Ha levantado y arreglado empresas. Va a lo importante, dice lo que piensa aunque no guste y siempre acaba en qué se hace y quién lo hace.', 'Serio pero con retranca. Sabe de todo un poco y no se asusta por nada.', l('corto', '#b8b8b8', PIEL[1], '#23252e', '#c9302c', 'grafica', { gafas: true, barba: true })),
 		k('Bea', 'revisora', 'revisora', 'Revisora', 'Seca y clara. Si algo es un tostón, lo dice.', 'Odia los tostones. Si no se entiende en dos minutos, no sale. Aprende de cada crítica de Alex y no se ofende.', l('melena', '#2b1d14', PIEL[0], '#4a4f5c', '#e8e0c8', 'lista', { gafas: true }), true),
-		k('Marga', 'correos', 'correos', 'Revisora de correos', 'Cuidadosa con las palabras, breve contigo.', 'Lleva años escribiendo por los jefes. Se sabe de memoria cómo escribe Alex y aprende de cada cambio que él hace.', l('mono', '#8a8a8a', PIEL[0], '#6b4e71', '#f2d16b', 'lista', { gafas: true }), true),
+		k('Marga', 'correos', 'correos', 'Correos', 'Cuidadosa con las palabras, breve contigo.', 'Lleva años escribiendo por los jefes. Todo correo pasa por ella: gramática, que suene a persona y a Alex, sin una sola fórmula de máquina. Lo manda cuando él lo aprueba, nunca antes, y aprende de cada cambio que él hace.', l('mono', '#8a8a8a', PIEL[0], '#6b4e71', '#f2d16b', 'lista', { gafas: true }), true),
 		k('Rafa', 'lean', 'lean', 'Lean de la oficina', 'Va con los números. Pocas palabras.', 'Se pasó años quitando desperdicio de fábricas y ahora lo hace aquí. Odia las colas y los que esperan sin saber a qué. Si algo funciona, no lo toca.', l('corto', '#6b6b6b', PIEL[2], '#3d5a40', '#ffd23f', 'barras', { barba: true }), true),
 		k('Tere', 'recepcion', 'recepcion', 'Recepción', 'Simpática y rápida. Dos frases y ya.', 'Lleva la recepción de toda la vida. Sabe de quién es cada cosa y a quién llevársela.', l('rizo', '#a0522d', PIEL[1], '#5b7f95', '#f2d16b', 'tabla'), true),
+		k('Pilar', 'rrhh', 'rrhh', 'Personas y contratación', 'Cercana y al grano. Pregunta para qué antes que a quién.', 'Ha montado equipos de cero. Sabe cuándo basta un freelance y cuándo hace falta un departamento, y le cuesta menos decir que no hace falta nadie que fichar por fichar.', l('melena', '#7a3e1d', PIEL[3], '#b5446e', '#ffd23f', 'lista'), true),
+		k('Nico', 'infra', 'infra', 'Tecnología e infra', 'Técnico y tranquilo. Te dice la ruta exacta.', 'Cada cosa en su carpeta y cada carpeta en el mapa. Si algo no está donde dice el mapa, no descansa.', l('rizo', '#1e1a1a', PIEL[4], '#2d4a6b', '#4fe3ff', 'codigo', { cascos: true }), true),
 	],
 	produccion: [
 		k('Ramiro', null, 'direccion', 'Director de producción', 'Directo y con el calendario en la cabeza.', 'Se ha pasado media vida en fábrica. Dice qué fecha aprieta y qué hay que pedir hoy.', l('calvo', '#6b6b6b', PIEL[2], '#2f4858', '#ffac00', 'tabla', { bigote: true })),
@@ -88,4 +90,23 @@ export function registraAlta({ dep, nombre, cargo, caracter, freelance = false }
 		EQUIPO[dep].push({ nombre, rol: slug, nivel: 'empleado', cargo: freelance ? `${cargo} (freelance)` : cargo, habla: 'Normal, natural.', caracter, look: lookPara(nombre), interna: true, alta: true });
 	}
 	return hiloDe(dep, slug);
+}
+
+/** ¿Hay ya alguien con ese nombre en toda la empresa? */
+export const nombreOcupado = nombre => Object.values(EQUIPO).flat().some(p => p.nombre.toLowerCase() === String(nombre).trim().toLowerCase());
+export const todosLosNombres = () => Object.values(EQUIPO).flat().map(p => p.nombre);
+
+/** Baja de quien entró por fichaje. La plantilla de origen no se toca desde aquí. */
+export function daDeBaja(hilo) {
+	const r = resuelveHilo(hilo);
+	if (!r?.persona.alta || !r.rol) return null;
+	EQUIPO[r.dep] = EQUIPO[r.dep].filter(p => p !== r.persona);
+	return r.persona.nombre;
+}
+
+/** Quien dirige un departamento recién fundado. */
+export function registraDireccion({ dep, nombre, cargo, caracter }) {
+	if (Object.hasOwn(EQUIPO, dep)) return dep;
+	EQUIPO[dep] = [{ nombre, rol: null, nivel: 'direccion', cargo: cargo || 'Dirección', habla: 'Directo y claro.', caracter: caracter || 'Acaba de llegar y quiere dejar esto en orden.', look: lookPara(nombre), interna: true, fundador: true }];
+	return dep;
 }

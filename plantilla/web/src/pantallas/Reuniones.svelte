@@ -43,7 +43,7 @@
 	{/if}
 	<ul>
 		{#each reuniones as r (r.id)}
-			<li><a href={`#/reunion/${r.id}`}>
+			<li><a data-fila href={`#/reunion/${r.id}`}>
 				<span class="titulo" class:espera={r.estado === 'lista'}>{r.deck?.titulo ?? r.tema}</span>
 				<span class="nota peq">{FASE[r.estado] ?? r.estado}, {cuandoFue(r.actualizado)}</span>
 			</a></li>
@@ -54,6 +54,7 @@
 </div></div>
 
 <style>
+	[data-fila]:focus-visible { outline: 3px solid var(--amarillo); outline-offset: 2px; border-radius: 4px; }
 	.cabeza { display: flex; justify-content: space-between; align-items: baseline; }
 	form { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; align-items: flex-start; }
 	.elegir { display: grid; grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); gap: 4px; width: 100%; }

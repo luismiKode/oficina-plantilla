@@ -29,7 +29,7 @@
 	<ul>
 		{#each correos as c (c.hilo)}
 			<li class:dinero={c.alerta_dinero}>
-				<button class="fila" aria-expanded={abierto === c.hilo} onclick={() => (abierto = abierto === c.hilo ? null : c.hilo)}>
+				<button class="fila" data-fila aria-expanded={abierto === c.hilo} onclick={() => (abierto = abierto === c.hilo ? null : c.hilo)}>
 					<span class="tit">{c.asunto}</span>
 					<span class="nota peq">{salas[c.sala]?.nombre}{c.urgencia === 'alta' ? ', urgente' : ''}</span>
 				</button>
@@ -46,12 +46,13 @@
 				{/if}
 			</li>
 		{:else}
-			<li class="vacio">Todo al día.</li>
+			<li class="vacio">Todo al día. Lo de Privado queda fuera.</li>
 		{/each}
 	</ul>
 </div></div>
 
 <style>
+	[data-fila]:focus-visible { outline: 3px solid var(--amarillo); outline-offset: 2px; border-radius: 4px; }
 	.cabeza { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 	.titulo-pantalla { margin-bottom: 2px; }
 	ul { list-style: none; margin: 12px 0 0; padding: 0; }

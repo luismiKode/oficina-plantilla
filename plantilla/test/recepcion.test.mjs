@@ -1,10 +1,12 @@
+import { CONFIG } from '../server/config.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { abrirDB } from '../server/db.mjs';
-import { normaliza, guardaPasada, proximaPasada, promptPasada, pasada, vigila } from '../server/recepcion.mjs';
+import { normaliza, guardaPasada, proximaPasada, promptPasada, pasada, vigila, parteDeTere } from '../server/recepcion.mjs';
+import { crearTareas } from '../server/tareas.mjs';
 import { argsRecepcion } from '../server/perfiles.mjs';
 
 const db = () => abrirDB(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'o-')), 'o.db'));
@@ -57,7 +59,7 @@ test('un hilo hecho con el mismo mensaje sigue hecho; con mensaje nuevo se reabr
 const pasa = (d, correos, extra = {}) => pasada({ db: d, ejecutor: async () => ({ estructurado: { saludo: 's', agenda: [], correos } }), ...extra });
 function testigos() {
 	const avisos = [], sala = [], reun = [], tareas = [];
-	return { avisos, sala, reun, tareas, salas: { escribir: (h, t, o) => sala.push([h, t, o]) }, reuniones: { propone: r => reun.push(r) }, tareasApi: { crea: t => tareas.push(t) }, avisa: a => avisos.push(a) };
+	return { avisos, sala, reun, tareas, salas: { escribir: (h, t, o) => { if (o?.origen !== 'parte') sala.push([h, t, o]); } }, reuniones: { propone: r => reun.push(r) }, tareasApi: { crea: t => tareas.push(t) }, avisa: a => avisos.push(a) };
 }
 
 test('alerta de dinero: va a Alex y nadie actúa antes que él', async () => {
@@ -78,12 +80,54 @@ test('un correo nuevo despierta a su departamento, marcado como correo', async (
 	assert.equal(t.avisos.length, 0, 'no molesta a Alex');
 });
 
-test('la alerta de dinero no se duplica aunque cambie el mensaje', async () => {
-	const d = db(); const refs = [];
-	const t = { crea: x => refs.push(x.ref) };
+test('la alerta de dinero no se repite mientras siga abierta; si la cerró, vuelve con otro mensaje', async () => {
+	const d = db();
+	const t = crearTareas({ db: d, dirDatos: fs.mkdtempSync(path.join(os.tmpdir(), 't-')), deps: [], tope: 0 });
 	await pasa(d, [hilo({ alerta_dinero: true })], { tareas: t });
 	await pasa(d, [hilo({ alerta_dinero: true, ultimo_mensaje: 'm2' })], { tareas: t });
-	assert.equal(new Set(refs).size, 1);
+	assert.equal(t.deAlex().abiertas.length, 1);
+	t.accion(t.deAlex().abiertas[0].id, { accion: 'hecha' });
+	await pasa(d, [hilo({ alerta_dinero: true, ultimo_mensaje: 'm3' })], { tareas: t });
+	assert.equal(t.deAlex().abiertas.length, 1);
+});
+
+test('un correo sin asunto no se lleva por delante al resto del lote', async () => {
+	const d = db(); const t = testigos();
+	d.ajuste('ultima_pasada', new Date().toISOString());
+	await pasa(d, [hilo({ hilo: 'a1', asunto: '', siguiente: '', para_alex: true, reaccion: 'nada' }), hilo({ hilo: 'a2', reaccion: 'departamento' })], { salas: t.salas, tareas: { crea() { throw new Error('sin título'); } } });
+	assert.equal(t.sala.length, 1);
+});
+
+test('la primera pasada informa y reparte, sin reuniones', async () => {
+	const d = db(); const t = testigos();
+	await pasa(d, [hilo({ reaccion: 'reunion', asistentes: ['finanzas'], urgencia: 'alta' })], { salas: t.salas, reuniones: t.reuniones });
+	assert.equal(t.reun.length, 0);
+	assert.equal(t.sala.length, 1);
+});
+
+test('la vigía no da por visto lo que no ha podido mirar', async () => {
+	const d = db();
+	const ejecutor = async () => ({ estructurado: { ids: ['a'] } });
+	let pasadas = 0;
+	await vigila({ db: d, ejecutor, lanzaPasada: async () => { pasadas++; return false; } });
+	await vigila({ db: d, ejecutor, lanzaPasada: async () => { pasadas++; return true; } });
+	await vigila({ db: d, ejecutor, lanzaPasada: async () => { pasadas++; return true; } });
+	assert.equal(pasadas, 2);
+});
+
+test('una pasada sin Gmail falla: no se da por mirado', async () => {
+	const d = db();
+	await assert.rejects(pasada({ db: d, ejecutor: async () => { throw new Error('Sin conexión con Gmail'); } }));
+	assert.equal(d.ajuste('ultima_pasada'), null);
+});
+
+test('el parte pone delante lo que no puede quedarse fuera y dice cuánto falta', () => {
+	const muchos = Array.from({ length: 45 }, (_, i) => ({ sala: 'fiscal', urgencia: 'normal', alerta_dinero: 0, asunto: `c${i}`, de: 'x', resumen: 'y', siguiente: '' }));
+	muchos.push({ sala: 'finanzas', urgencia: 'normal', alerta_dinero: 1, asunto: 'Cambio de cuenta', de: 'x', resumen: 'y', siguiente: '' });
+	const t = parteDeTere({ correos: muchos }, 3);
+	assert.match(t.split('\n')[1], /ALERTA/);
+	assert.match(t, /Y 6 más/);
+	assert.match(t, /3 no se han repartido/);
 });
 
 test('el mismo correo no despierta dos veces; con mensaje nuevo, sí', async () => {
@@ -97,6 +141,7 @@ test('el mismo correo no despierta dos veces; con mensaje nuevo, sí', async () 
 
 test('si cruza departamentos se reúnen, sin preguntarle', async () => {
 	const d = db(); const t = testigos();
+	d.ajuste('ultima_pasada', new Date().toISOString());
 	await pasa(d, [hilo({ reaccion: 'reunion', asistentes: ['finanzas'] })], { reuniones: t.reuniones, avisa: t.avisa });
 	assert.equal(t.reun[0].convoca, 'produccion');
 	assert.deepEqual(t.reun[0].asistentes, ['finanzas']);
@@ -123,7 +168,7 @@ test('solo si es de Alex entra en su lista, y sin reentrar', async () => {
 test('con el tope del día no despierta a nadie más', async () => {
 	const d = db(); const t = testigos();
 	const ahora = new Date();
-	d.ajuste(`avisos:${ahora.toISOString().slice(0, 10)}`, 15);
+	d.ajuste(`avisos:${ahora.toISOString().slice(0, 10)}`, CONFIG.TOPES.avisos);
 	await pasa(d, [hilo({ reaccion: 'departamento' })], { salas: t.salas, ahora });
 	assert.equal(t.sala.length, 0);
 });

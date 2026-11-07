@@ -3,28 +3,39 @@
 	import { lee, mandaFormulario, manda, escucha, formato } from '../lib/api.js';
 	import Retrato from '../lib/Retrato.svelte';
 	import Microfono from '../lib/Microfono.svelte';
+	import { estado, tecladoFisico } from '../lib/teclado.js';
 
 	let { hilo } = $props();
-	let persona = $state(null), mensajes = $state([]), trabajando = $state(false), progreso = $state('');
-	let texto = $state(''), archivos = $state([]), aFondo = $state(false), error = $state(''), enviando = $state(false), mas = $state(false);
+	let persona = $state(null), mensajes = $state([]), vivo = $state(null), reloj = $state(Date.now()), abierto = $state(null);
+	let texto = $state(''), archivos = $state([]), error = $state(''), enviando = $state(false), mas = $state(false);
 	let abajo;
+	const COLA = { ocupado: 'Termina lo que tiene entre manos y te contesta', espera: 'En cola: el resto de la oficina está ocupado' };
+	const baja = async () => { await tick(); abajo?.scrollIntoView({ block: 'end' }); };
+	const tiempo = s => (s < 60 ? `${s} s` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
+	const segundos = $derived(vivo?.desde ? Math.max(0, Math.round((reloj - vivo.desde) / 1000)) : 0);
+	const anteriores = $derived(vivo?.pasos ? vivo.pasos.filter(p => p.texto !== vivo.ahora).slice(-3) : []);
 
 	async function carga() {
 		try {
 			const j = await lee(`/api/salas/${encodeURIComponent(hilo)}/mensajes`);
-			persona = j.persona; mensajes = j.mensajes; trabajando = j.trabajando;
-			await tick(); abajo?.scrollIntoView({ block: 'end' });
+			persona = j.persona; mensajes = j.mensajes; vivo = j.vivo;
+			await baja();
 		} catch (e) { error = e.message; }
 	}
 	onMount(() => {
 		carga();
-		return escucha(e => {
+		// Con teclado físico, entras y ya puedes escribir.
+		if (estado.usandoTeclas) setTimeout(() => document.querySelector('.sala textarea')?.focus(), 80);
+		const t = setInterval(() => { if (vivo?.desde) reloj = Date.now(); }, 1000);
+		const off = escucha(e => {
 			if (e.tipo === 'conectado') return carga();
 			if (e.hilo !== hilo) return;
-			if (e.tipo === 'progreso') progreso = e.texto;
-			if (e.tipo === 'estado') { trabajando = e.trabajando; if (!e.trabajando) progreso = ''; }
-			if (e.tipo === 'mensaje') carga();
+			// Lo que está hablando con otros no se ve aquí.
+			if (e.interno) return;
+			if (e.tipo === 'progreso') { vivo = { desde: e.desde, ahora: e.ahora, pasos: e.pasos, cola: vivo?.cola ?? null }; baja(); }
+			if (e.tipo === 'estado' || e.tipo === 'mensaje') carga();
 		});
+		return () => { clearInterval(t); off(); };
 	});
 	async function envia(ev) {
 		ev?.preventDefault();
@@ -32,29 +43,28 @@
 		enviando = true; error = '';
 		const fd = new FormData();
 		fd.set('texto', texto.trim());
-		if (aFondo) fd.set('a_fondo', '1');
 		for (const a of archivos) fd.append('archivos', a);
 		try {
 			await mandaFormulario(`/api/salas/${encodeURIComponent(hilo)}/mensajes`, fd);
-			texto = ''; archivos = []; aFondo = false;
+			texto = ''; archivos = [];
 			await carga();
 		} catch (e) { error = e.message; }
 		enviando = false;
 	}
-	const tecla = e => { if (e.key === 'Enter' && !e.shiftKey && matchMedia('(hover: hover)').matches) envia(e); };
+	// Enter envía con teclado físico. Con el de pantalla, es un salto de línea.
+	const tecla = e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && tecladoFisico()) envia(e); };
 	async function nueva() {
 		await manda(`/api/salas/${encodeURIComponent(hilo)}/nueva`);
 		mas = false;
 		mensajes = [...mensajes, { id: `n${Date.now()}`, autor: 'corte', texto: 'Conversación nueva', adjuntos: [] }];
 	}
-	const quien = m => (m.de_sala ? 'recado' : '');
 </script>
 
-<div class="sala">
+<div class="sala entra">
 	<header>
 		{#if persona}
 			<Retrato look={persona.look} tam={44} />
-			<div class="id"><h1>{persona.nombre}</h1><p class="nota">{trabajando ? (progreso || 'Escribiendo') : persona.cargo}</p></div>
+			<div class="id"><h1>{persona.nombre}</h1><p class="nota">{persona.cargo}</p></div>
 			<button class="boton texto" onclick={() => (mas = !mas)} aria-expanded={mas}>Más</button>
 		{/if}
 	</header>
@@ -73,12 +83,26 @@
 	<div class="hilo" aria-live="polite">
 		{#each mensajes as m (m.id)}
 			{#if m.autor === 'corte' || m.autor === 'nota'}<p class="corte">{m.texto}</p>
-			{:else if m.autor === 'sala'}<div class="suyo" class:fallo={m.estado === 'error'}>{@html formato(m.texto)}</div>
-			{:else if m.autor === 'recado'}<div class="recado">{@html formato(m.origen === 'correo' ? `Tere le ha pasado un correo` : m.texto)}</div>
+			{:else if m.autor === 'sala'}
+				<div class="suyo" class:fallo={m.estado === 'error'}>{@html formato(m.texto)}</div>
+				{#if m.pasos?.pasos?.length > 1}
+					<button type="button" class="como" aria-expanded={abierto === m.id} onclick={() => (abierto = abierto === m.id ? null : m.id)}>{m.pasos.pasos.length - 1} {m.pasos.pasos.length === 2 ? 'paso' : 'pasos'}, {tiempo(Math.round(m.pasos.ms / 1000))}</button>
+					{#if abierto === m.id}<ol class="pasos">{#each m.pasos.pasos.slice(1) as p}<li>{p.texto}</li>{/each}</ol>{/if}
+				{/if}
 			{:else}
 				<div class="mio">{@html formato(m.texto)}{#each m.adjuntos ?? [] as a}<p class="adj">{a}</p>{/each}</div>
 			{/if}
 		{/each}
+		{#if vivo && persona}
+			<div class="vivo">
+				<Retrato look={persona.look} tam={32} />
+				<div class="cuenta">
+					{#each anteriores as p}<p class="antes">{p.texto}</p>{/each}
+					<p class="ahora" role="status"><span class="latido" aria-hidden="true"></span>{vivo.ahora || COLA[vivo.cola] || 'Enseguida'}{#if vivo.desde}<span class="crono" aria-hidden="true">{tiempo(segundos)}</span>{/if}</p>
+					{#if vivo.desde && vivo.cola === 'despues'}<p class="antes">Tu último mensaje va después de esto</p>{/if}
+				</div>
+			</div>
+		{/if}
 		<div bind:this={abajo}></div>
 	</div>
 
@@ -91,11 +115,13 @@
 			{#if texto.trim() || archivos.length}<button class="boton enviar" disabled={enviando}>Enviar</button>
 			{:else}<Microfono {hilo} alEnviar={carga} />{/if}
 		</div>
-		<label class="fondo"><input type="checkbox" bind:checked={aFondo} /> Que se lo piense a fondo</label>
 	</form>
 </div>
 
 <style>
+	.entra { animation: entrar .16s ease-out; }
+	@keyframes entrar { from { opacity: 0; transform: scale(1.03); } }
+	@media (prefers-reduced-motion: reduce) { .entra { animation: none; } }
 	.sala { height: 100%; display: flex; flex-direction: column; background: var(--papel); }
 	header { padding: max(10px, env(safe-area-inset-top)) 16px 8px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--linea); min-height: 60px; }
 	.id { flex: 1; min-width: 0; }
@@ -107,7 +133,6 @@
 	.suyo { background: #fff; align-self: flex-start; }
 	.suyo.fallo { background: #f2d3cf; }
 	.mio { background: var(--negro); color: var(--papel); align-self: flex-end; }
-	.recado { align-self: center; font-size: 13px; color: var(--apagado); text-align: center; max-width: 86%; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
 	.adj { font-size: 14px; opacity: .8; }
 	.hilo :global(p + p), .hilo :global(ul + p), .hilo :global(p + ul) { margin-top: .5em; }
 	.hilo :global(ul) { margin: 0; padding-left: 1.1em; }
@@ -119,6 +144,18 @@
 	.clip { width: 44px; height: 44px; flex: none; display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 300; cursor: pointer; }
 	.clip input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 	.clip:focus-within { outline: 3px solid var(--marca-foco); border-radius: 22px; }
-	.fondo { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--apagado); padding-left: 50px; }
+	.como { align-self: flex-start; font-size: 13px; color: var(--apagado); padding: 0 13px; text-decoration: underline; text-decoration-color: var(--linea); text-underline-offset: 3px; min-height: 28px; }
+	.pasos { align-self: flex-start; margin: 0 0 4px; padding: 0 13px 0 32px; font-size: 14px; color: var(--apagado); }
+	.pasos li { padding: 1px 0; overflow-wrap: anywhere; }
+	.vivo { display: flex; gap: 8px; align-items: flex-end; align-self: flex-start; max-width: 92%; margin-top: 2px; }
+	.vivo :global(canvas), .vivo :global(img) { flex: none; }
+	.cuenta { background: #fff; border-radius: 16px; padding: 8px 13px; min-width: 0; }
+	.cuenta p { line-height: 1.3; overflow-wrap: anywhere; }
+	.antes { font-size: 14px; color: var(--apagado); }
+	.ahora { display: flex; align-items: baseline; gap: 7px; font-size: 15px; font-weight: 600; }
+	.latido { width: 8px; height: 8px; border-radius: 50%; background: var(--amarillo); flex: none; align-self: center; animation: latir 1.1s ease-in-out infinite; }
+	@keyframes latir { 50% { opacity: .25; transform: scale(.75); } }
+	@media (prefers-reduced-motion: reduce) { .latido { animation: none; } }
+	.crono { margin-left: auto; padding-left: 10px; font-family: var(--marca-font-numbers); font-weight: 500; font-size: 13px; color: var(--apagado); font-variant-numeric: tabular-nums; }
 	.elegidos { font-size: 14px; }
 </style>

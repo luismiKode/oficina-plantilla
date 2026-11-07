@@ -14,6 +14,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 button { background: none; border: 0; padding: 0; cursor: pointer; text-align: inherit; }
 a { color: inherit; }
 :focus-visible { outline: 3px solid var(--marca-foco); outline-offset: 2px; }
+.con-teclas main :focus { outline: 3px solid var(--amarillo); outline-offset: 2px; border-radius: 4px; }
 .num { font-family: var(--marca-font-numbers); font-variant-numeric: tabular-nums; }
 
 .boton { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: .4em 1em; font-weight: 700; border-radius: 22px; background: var(--amarillo); color: var(--negro); white-space: nowrap; }

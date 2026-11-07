@@ -307,7 +307,11 @@ ${lecciones?.bloque('revisora') ?? ''}`;
 		propone({ tema, objetivo = '', convoca, asistentes = [], urgente = false }) {
 			if (!resuelveHilo(convoca)) return null;
 			// Lo urgente no espera a mañana por un tope.
-			const entra = urgente || hoyConvocadas() < tope;
+			const claveUrgentes = `reuniones_urgentes:${new Date().toISOString().slice(0, 10)}`;
+			const urgentes = Number(db.ajuste(claveUrgentes) || 0);
+			const porUrgente = urgente && urgentes < 3;
+			const entra = porUrgente || hoyConvocadas() < tope;
+			if (porUrgente) db.ajuste(claveUrgentes, urgentes + 1);
 			if (entra) contar();
 			const { id } = db.run(`INSERT INTO reuniones (tema, objetivo, convoca, asistentes, estado) VALUES (?, ?, ?, ?, ?)`, tema, objetivo, convoca, JSON.stringify(normalizaAsistentes(asistentes)), entra ? 'preparando' : 'en_cola');
 			emite(id);

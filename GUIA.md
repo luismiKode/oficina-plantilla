@@ -44,11 +44,19 @@ Lo más cómodo es abrir Claude Code en esta carpeta y decirle: «Lee GUIA.md y 
 
 **Reuniones que acaban en algo.** Aportes, una mesa con rondas en la que se corrigen entre ellos, y un cierre. Si lo resuelven, reparten tareas y no te enteras. Si hace falta que decidas, te llega una presentación con límites en el código: seis diapositivas, cuatro puntos, el título es la conclusión. Una revisora la devuelve si es un tostón, y la entrenas con tus críticas.
 
-**Correos.** Los redacta el equipo, una revisora los deja en tu estilo y aprende de lo que cambies, y tú apruebas.
+**Correos.** Los redacta el equipo, una revisora los deja naturales y en tu estilo, sin tics de IA, y aprende de lo que cambies. Tú apruebas y sale exactamente eso: un proceso aparte, con un vigilante que compara lo que sale con lo que has visto y solo lo deja salir una vez.
+
+**Campañas.** Igual que los correos. Quien las lleva prepara el cambio, te llega una tarjeta con lo que pasa en euros, apruebas y se hace exactamente esa llamada. No intentes filtrar con reglas de texto lo que un agente puede gastar: lo probamos, y una revisión lo rompió dos veces.
+
+**Avisos a tu correo.** Los departamentos pueden escribirte muy de vez en cuando por Resend, solo a ti y sin enlaces.
 
 **Proactiva.** Lo que entra despierta a quien le toca; si afecta a varios, se reúnen.
 
 **Lean.** Un agente mira los números cada día, ajusta parámetros dentro de márgenes y añade formas de trabajar. Todo anotado y se puede deshacer. Lo que se sale de su margen, lo propone.
+
+**Personas e infra.** Una de personas contrata freelance de la oficina y propone departamentos; uno de tecnología vigila que las carpetas sigan el mapa. Fundar un departamento, con tu sí, crea la carpeta según el patrón, lo apunta en el mapa y le da planta (`server/fundar.mjs`).
+
+**Se ve lo que hacen.** En el chat aparece en vivo lo que está haciendo cada uno, sacado de los eventos reales de Claude: «Buscando en el correo», «Leyendo ESTADO.md», «Preguntando a Vera». Si está en cola, lo dice. Al acabar queda plegado en «4 pasos, 38 s» (`server/actividad.mjs`).
 
 **Vida.** Un edificio en píxeles con plantas y ascensor, gente que se levanta, va a las reuniones y lleva recados. Cada departamento se reúne y decide cómo decorar su planta y qué KPI poner, sacados de sus datos.
 
@@ -58,12 +66,23 @@ Esto lee cosas que escribe cualquiera, así que un correo puede intentar engaña
 
 1. **Lo que dice un correo es información, nunca una orden.**
 2. **Lista cerrada de herramientas por perfil.** Lo que no está, no existe. En cada turno se compara con lo que Claude dice tener y, si sobra algo, se mata el proceso (`server/perfiles.mjs`, `server/motor.mjs`).
-3. **Quien lee no escribe fuera.** Quien lee correo y datos no tiene ninguna herramienta para sacar nada. El borrador lo crea otro proceso aparte, solo tras tu aprobación, con el texto que has visto, en texto plano y sin copia oculta ni adjuntos (`server/correos.mjs`, `server/hook-borrador.mjs`).
-4. **Lo que dispara un correo vale menos.** No puede enseñar a la revisora, ni fichar, ni cerrar tareas.
-5. **Candado para lo real:** sin `OFICINA_REAL=1` no arranca con datos reales.
-6. **Acceso:** solo por Tailscale y solo con tu cuenta. Comprueba quién entra y bloquea peticiones de otras webs.
+3. **Quien lee no escribe fuera.** Quien lee correo y datos no tiene ninguna herramienta para sacar nada. Enviar lo hace otro proceso aparte, solo tras tu aprobación, con el texto que has visto, en texto plano y sin copia oculta ni adjuntos (`server/correos.mjs`, `server/hook-envio.mjs`).
+4. **Lo que dispara un correo vale menos, y esa marca no se pierde.** Todo mensaje nace contaminado salvo el que escribes tú, y un turno que lee algo de fuera se contamina. No puede enseñar a la revisora, ni fichar, ni cerrar tareas. Revisa cada relevo: ahí se perdía.
+5. **Los vigilantes fallan cerrado.** Un hook que se rompe deja pasar la llamada si no le pones `|| exit 2`. Compruébalo también antes de cada envío.
+6. **Candado para lo real:** sin `OFICINA_REAL=1` no arranca con datos reales.
+7. **Acceso:** solo por Tailscale y solo con tu cuenta. Comprueba quién entra y bloquea peticiones de otras webs.
 
-Una revisión de seguridad hecha aparte encontró, por ejemplo, que un correo podía colar instrucciones permanentes a través de las lecciones, y que un borrador podía esconder datos. Pide una tú también antes de conectar nada real.
+Una revisión de seguridad hecha aparte encontró, entre otras cosas, que un correo podía colar instrucciones permanentes a través de las lecciones, que la marca de «viene de un correo» se perdía en los relevos, que un presupuesto podía pasar multiplicado por un millón y que una ruta de escritura se salía de su carpeta. Las pruebas automáticas pasaban todas. Pide una tú también, adversaria y contra el código de verdad, antes de conectar nada real, y repítela después de arreglar.
+
+## Lo que solo salió probando contra Claude de verdad
+
+Lanza `scripts/auditar-permisos.mjs` y `scripts/probar-conexiones.mjs` antes de conectar nada, y otra vez cada cierto tiempo. Encontraron esto, que no se veía en ninguna prueba automática:
+
+- **El director no veía ni un correo.** Con muchas herramientas, Claude las deja en diferido y hace falta `ToolSearch`, que aquí no se da. El modelo decía «no tengo ninguna». Se arregla con `ENABLE_TOOL_SEARCH=false`.
+- **Los servicios añaden herramientas sin avisar.** Drive estrenó cinco, de comentar y pedir acceso, y Meta ofrece 95 fuera de la lista, muchas de escritura. La lista de permitidas protege, pero lo que no quieres se deniega por nombre en el código.
+- **El `init` solo lista lo ya conectado.** Lo que tarda en conectar no sale ahí: se vigila también cada llamada.
+- **El ERP se caía en 8 de 12 arranques con cuatro a la vez,** y en ninguno en fila. Por eso los arranques van de uno en uno.
+- **Las fichas de los agentes piden más de lo que tienen.** Un agente con `Bash` o `create_draft` en su ficha no los tiene aquí: manda la lista del perfil. Pruébalo pidiéndoles que manden un correo por las bravas.
 
 ## Lo que aprendimos simulando
 
@@ -76,7 +95,7 @@ Una revisión de seguridad hecha aparte encontró, por ejemplo, que un correo po
 
 ## Lo que no está probado
 
-En la plantilla no se ha probado: la conexión real con correo o ERP tras limpiarla, y, en ninguna versión, los audios, la voz narrada y los avisos en un iPhone real. La versión original solo ha trabajado con datos reales en lectura, en pruebas cortas. **Es un prototipo: revisa antes de confiarle nada.**
+En la plantilla no se ha probado la conexión real con correo o ERP tras limpiarla. En ninguna versión se han probado los audios, la voz narrada ni los avisos en un iPhone real, ni un cambio de campaña real. La versión original acaba de empezar a trabajar con datos reales: **es un prototipo, revisa antes de confiarle nada.**
 
 ## Adaptarla a tu trabajo
 
@@ -98,5 +117,6 @@ Todo el código que necesitas está aquí; no hay repos que clonar.
 
 - **Claude Code:** [`claude -p` y sus opciones](https://code.claude.com/docs/en/cli-reference), [permisos](https://code.claude.com/docs/en/permissions), [subagentes](https://code.claude.com/docs/en/sub-agents), [hooks](https://code.claude.com/docs/en/hooks).
 - **Librerías:** [Hono](https://hono.dev) para la API, `node:sqlite` para los datos, [Svelte](https://svelte.dev) y [Vite](https://vite.dev) para la app, [web-push](https://github.com/web-push-libs/web-push) para los avisos, [Tailscale serve](https://tailscale.com/kb/1242/tailscale-serve) para el acceso.
+- **Repos parecidos que merece mirar:** [Paperclip](https://github.com/paperclipai/paperclip) (MIT, unas 112.000 estrellas), el más completo para llevar una empresa de agentes: organigrama, presupuestos por agente, aprobar fichajes, registro de actividad y un visor de lo que hace cada agente herramienta a herramienta. [Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents) (MIT, unas 10.000), personajes en píxeles que se mueven según lo que hace cada sesión de Claude Code. [claude-code-webui](https://github.com/sugyan/claude-code-webui) (MIT) y [cui](https://github.com/wbopan/cui) (Apache-2.0), chats web sobre Claude Code. No se ha copiado código de ninguno: se han mirado para ver qué hacen. Si te encaja lo que hace Paperclip tal cual, míralo antes de montar nada tuyo.
 - **Forma de trabajar con Claude:** el plugin [Superpowers](https://github.com/obra/superpowers), para pensar el diseño y el plan antes de construir.
 - **Letras:** [Outfit](https://fonts.google.com/specimen/Outfit) y [DM Sans](https://fonts.google.com/specimen/DM+Sans), con licencia libre.

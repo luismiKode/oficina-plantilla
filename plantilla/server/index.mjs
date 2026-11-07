@@ -12,7 +12,7 @@ import { crearTareas, configERP } from './tareas.mjs';
 import { crearAvisos, crearSalud } from './avisos.mjs';
 import { pasada, arrancaRecepcion, arrancaVigia } from './recepcion.mjs';
 import { pendientes } from './estado.mjs';
-import { DEPARTAMENTOS } from './departamentos.mjs';
+import { DEPARTAMENTOS, POR_ID } from './departamentos.mjs';
 import { crearReuniones } from './reuniones.mjs';
 import { crearLecciones } from './lecciones.mjs';
 import { crearVoz } from './voz.mjs';
@@ -21,6 +21,12 @@ import { crearDecorador } from './decoracion.mjs';
 import { crearLean } from './lean.mjs';
 import { usaBase } from './parametros.mjs';
 import { registraUso } from './motor.mjs';
+import { crearFundador } from './fundar.mjs';
+import { crearAvisoCorreo } from './avisame.mjs';
+import { crearCampanas } from './campanas.mjs';
+import { crearSubidas } from './subidas.mjs';
+import { execFile } from 'node:child_process';
+import { arrancaInfra } from './infra.mjs';
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
@@ -54,19 +60,34 @@ let salas, tareas, reuniones;
 const salud = crearSalud({ bus, alRecuperar: () => { salas?.siguiente(); tareas?.siguiente(); reuniones?.siguiente(); } });
 const mcpConfig = CONFIG.SIMULACION ? null : configERP(CONFIG.DATOS);
 const lecciones = crearLecciones({ db, log });
+const avisoCorreo = crearAvisoCorreo({ db, log });
+// Antes de tocar una campaña, lo que dice el aprendizaje (regla de Marketing). Sin terminal para los agentes: lo saca el servicio.
+let aprendizajeCache = { t: 0, texto: '' };
+const aprendizaje = () => new Promise(res => {
+	if (Date.now() - aprendizajeCache.t < 30 * 60_000) return res(aprendizajeCache.texto);
+	const dir = POR_ID.marketing.carpeta;
+	execFile('python3', ['7-Datos/scripts/aprendizaje.py'], { cwd: dir, timeout: 120_000, maxBuffer: 2_000_000 }, (e, salida) => {
+		if (e) return res('No he podido sacarlo. No toques nada que dependa de esto y díselo a Alex.');
+		aprendizajeCache = { t: Date.now(), texto: String(salida).slice(0, 6000) };
+		res(aprendizajeCache.texto);
+	});
+});
 const voz = crearVoz();
 const escribeSala = (h, t, o) => salas.escribir(h, t, o);
 
-tareas = crearTareas({ db, bus, salud, avisa, mcpConfig, escribeSala, leccionesDe: d => lecciones.bloque(d), alResultado: (t, texto) => {
+const fundador = crearFundador({ db, acme: CONFIG.EMPRESA, home: CONFIG.HOME, conPuerta: !CONFIG.SIMULACION });
+tareas = crearTareas({ db, bus, salud, avisa, mcpConfig, escribeSala, fundador, leccionesDe: d => lecciones.bloque(d), alResultado: (t, texto) => {
 	const m = extraeMarcas(texto);
 	const h = resuelveHilo(t.responsable) ?? resuelveHilo(t.equipo);
 	for (const c of m.correos) correos.propone({ ...c, desde: t.responsable ?? t.equipo }).catch(e => log('correo:', e.message));
 	if (h?.persona.nivel === 'direccion') for (const n of m.tareas) if (n.equipo === 'alex') tareas.pideAAlex({ titulo: n.titulo, desde: t.responsable ?? t.equipo });
 } });
 const correos = crearCorreos({ db, bus, tareas, lecciones, avisa, escribeSala, pluginsUsuario, log });
+const campanasSalida = crearCampanas({ db, bus, tareas, escribeSala, aprendizaje, avisa, log, escribeFicha: !CONFIG.SIMULACION });
+const subidas = crearSubidas({ db, bus, tareas, log });
 reuniones = crearReuniones({ db, bus, salud, lecciones, tareas, avisa, mcpConfig, log, escribeSala, decorador: crearDecorador({ db, bus }) });
 salas = crearSalas({
-	db, bus, salud, pluginsUsuario, avisa, tareas, correos,
+	db, bus, salud, pluginsUsuario, avisa, tareas, correos, avisoCorreo, campanasSalida, aprendizaje,
 	proponerReunion: reuniones.propone,
 	opinar: t => reuniones.opina(t).catch(e => log('opinión:', e.message)),
 	leccionesDe: dep => lecciones.bloque(dep),
@@ -76,22 +97,28 @@ salas = crearSalas({
 const lean = crearLean({ db, bus, tareas, lecciones, log });
 
 let enPasada = false;
-const opcionesPasada = { db, salud, bus, pluginsUsuario, avisa, salas, reuniones, tareas, modos: () => lecciones.bloque('recepcion'), pendientes: () => pendientes(DEPARTAMENTOS, db) };
+// Dentro de la app no hay avisos: una alerta de dinero le llega también al correo.
+const avisaPasada = a => { avisa(a); if (a.dinero) avisoCorreo.manda({ desde: 'general:recepcion', quien: 'Tere', asunto: a.titulo, texto: `${a.cuerpo ?? ''}. Comprueba por otra vía antes de hacer nada.`, dinero: true }).catch(() => {}); };
+const opcionesPasada = { db, salud, bus, pluginsUsuario, avisa: avisaPasada, salas, reuniones, tareas, modos: () => lecciones.bloque('recepcion'), pendientes: () => pendientes(DEPARTAMENTOS, db) };
 const mirar = async () => {
-	if (enPasada) return;
+	if (enPasada) return false;
 	enPasada = true;
-	try { await pasada(opcionesPasada); } catch (e) { log('pasada:', e.message); throw e; } finally { enPasada = false; }
+	try { await pasada(opcionesPasada); return true; } catch (e) { log('pasada:', e.message); throw e; } finally { enPasada = false; }
 };
 
-const app = crearApp({ db, bus, salas, tareas, lean, correosSalida: correos, reuniones, lecciones, voz, avisos, salud, mirar, estatico: 'web/dist' });
+const app = crearApp({ db, bus, salas, tareas, lean, correosSalida: correos, campanasSalida, subidas, reuniones, lecciones, voz, avisos, salud, mirar, estatico: 'web/dist' });
 
 await salud.comprobar();
 salas.arranca();
+correos.arranca();
+campanasSalida.arranca();
+subidas.arranca();
 tareas.arranca();
 reuniones.arranca();
 lean.arranca();
 if (!CONFIG.SIMULACION) arrancaRecepcion({ ...opcionesPasada, mirar }, log);
-if (!CONFIG.SIMULACION) arrancaVigia({ db, salud, pluginsUsuario, lanzaPasada: mirar }, log);
+if (!CONFIG.SIMULACION) arrancaVigia({ db, salud, pluginsUsuario, lanzaPasada: () => mirar().catch(() => false) }, log);
+if (!CONFIG.SIMULACION) arrancaInfra({ db, salas, acme: CONFIG.EMPRESA, log });
 setInterval(() => salud.comprobar(), 600_000).unref();
 process.on('unhandledRejection', e => log('sin capturar:', e?.message ?? e));
 

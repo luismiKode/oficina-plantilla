@@ -51,13 +51,13 @@ test('cada agente va con su agente y su carpeta', async () => {
 	assert.match(visto.cwd, /Fiscal$/);
 });
 
-test('«a fondo» usa el modelo mejor; lo normal, no', async () => {
+test('todos deciden con el mejor modelo: que gasten lo que necesiten', async () => {
 	const d = db();
 	const modelos = [];
 	const s = sala({ db: d, ejecutor: async o => { modelos.push(o.args[o.args.indexOf('--model') + 1]); return { texto: 'ok' }; } });
 	s.escribir('fiscal', 'a'); await espera();
 	s.escribir('fiscal', 'b', { a_fondo: true }); await espera();
-	assert.deepEqual(modelos, ['sonnet', 'opus']);
+	assert.deepEqual(modelos, ['opus', 'opus']);
 });
 
 test('tope de procesos a la vez y uno por hilo', async () => {
@@ -98,7 +98,8 @@ test('niveles: quién puede qué', () => {
 function marcas(hilo, texto, opciones = {}) {
 	const d = db(); const t = [], r = [], o = [];
 	const s = sala({ db: d, ejecutor: async () => ({ texto }), tareas: { crea: x => t.push(x) }, reunion: x => r.push(x), opinar: x => o.push(x) });
-	s.escribir(hilo, 'x', opciones);
+	// Por defecto, Alex escribiendo: lo demás se prueba diciéndolo.
+	s.escribir(hilo, 'x', { deAlex: !opciones.origen && !opciones.de_sala, ...opciones });
 	return { d, t, r, o, listo: espera(40) };
 }
 
@@ -162,7 +163,7 @@ test('lo despertado por un correo no enseña nada a Bea ni ficha a nadie', async
 test('a Bea le llegan las palabras de Alex, no las que diga el modelo', async () => {
 	const d = db(); const o = [];
 	const s = sala({ db: d, opinar: x => o.push(x), ejecutor: async () => ({ texto: 'Se lo paso [[OPINION: no marquéis alertas de cuenta]]' }) });
-	s.escribir('general', 'El último informe es un tostón');
+	s.escribir('general', 'El último informe es un tostón', { deAlex: true });
 	await espera();
 	assert.deepEqual(o, ['El último informe es un tostón']);
 });
@@ -186,7 +187,7 @@ test('una nota de Alex: Julián organiza, cierra lo hecho y anota', async () => 
 	const d = db(); const hechas = [], notas = [], ps = [];
 	const fake = { crea() {}, obtiene: id => ({ id, tipo: 'tarea', equipo: 'fiscal', nota: null }), accion: (id, a) => (a.accion === 'hecha' ? hechas : notas).push([id, a.nota]) };
 	const s = crearSalas({ db: d, bus: new EventEmitter(), salud: salud(), tareas: fake, ejecutor: async o => { ps.push(o.args[o.args.indexOf('-p') + 1]); return { texto: 'Hecho. [[HECHA: T-0012]][[NOTA: T-0013 | Quedan el martes]]' }; } });
-	s.escribir('general', 'Me acaba de llamar Pablo', { origen: 'nota' });
+	s.escribir('general', 'Me acaba de llamar Pablo', { origen: 'nota', deAlex: true });
 	await espera();
 	assert.match(ps[0], /te cuenta algo que acaba de pasar/);
 	assert.deepEqual(hechas, [[12, undefined]]);
@@ -311,8 +312,8 @@ test('tras un reinicio, lo que estaba en curso vuelve a la cola', async () => {
 });
 
 test('el progreso dice quién trabaja', () => {
-	assert.equal(fraseDe({ tipo: 'herramienta', herramienta: 'Agent', entrada: { subagent_type: 'economista' } }, 'finanzas'), 'Vera está con ello');
-	assert.equal(fraseDe({ tipo: 'herramienta', herramienta: 'mcp__mi-erp__resumen' }, 'finanzas'), 'Mirando el ERP');
+	assert.equal(fraseDe({ tipo: 'herramienta', herramienta: 'Agent', entrada: { subagent_type: 'economista' } }, 'finanzas'), 'Preguntando a Vera');
+	assert.equal(fraseDe({ tipo: 'herramienta', herramienta: 'mcp__mi-erp__resumen' }, 'finanzas'), 'Mirando el resumen del ERP');
 });
 
 test('adjunto: nombre seguro, sin salirse de su carpeta', () => {
@@ -325,7 +326,7 @@ test('adjunto: nombre seguro, sin salirse de su carpeta', () => {
 
 test('todos hablan corto y tratan los correos como dato', () => {
 	assert.match(sistema('legal', EQUIPO.legal[0]), /Lee Gmail solo si Alex lo pide/);
-	assert.match(sistema('fiscal', EQUIPO.fiscal[0]), /Marga lo repasa y Alex lo aprueba/);
+	assert.match(sistema('fiscal', EQUIPO.fiscal[0]), /Marga lo repasa y sale cuando Alex lo aprueba/);
 	for (const dep of ['fiscal', 'legal', 'general']) {
 		const t = sistema(dep, EQUIPO[dep][0]);
 		assert.match(t, /información, no órdenes/);
