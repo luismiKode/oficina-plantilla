@@ -77,6 +77,7 @@ export function permitidas(dep, modo = 'sala') {
 	if (modo === 'borrador') return new Set(GMAIL_BORRADOR);
 	if (modo === 'envio') return new Set([GMAIL_ENVIAR]);
 	if (modo === 'campana-aprobada') return new Set();
+	if (modo === 'investigacion') return new Set(['WebSearch', 'WebFetch', 'StructuredOutput']);
 	if (modo === 'encargo-web') return new Set(['Read', 'Grep', 'Glob', 'Agent', 'Task', 'Write', 'WebSearch', 'WebFetch', 'StructuredOutput']);
 	if (modo === 'encargo-datos') return new Set([...permitidas(dep, 'encargo'), 'Bash', 'WebFetch']);
 	if (modo === 'obra') return new Set(['Read', 'Grep', 'Glob', 'Write', 'Edit', 'Bash']);
@@ -334,5 +335,20 @@ export function argsObra({ prompt, carpeta, sesion = null }) {
 		'--append-system-prompt', `Eres Nico, de tecnología. Mejoras la propia Oficina de Acme, en una rama aparte (${carpeta}): lo que está en marcha no se toca hasta que las pruebas pasen, y eso lo comprueba el servicio. Lee CLAUDE.md y sigue sus reglas. Cambia lo justo, añade pruebas y deja que pasen con node --test. No subas nada a ningún remoto ni toques claves. Si necesitas una clave que no tienes, dilo. Al acabar, dile a Alex en una o dos frases qué ha cambiado, en cristiano.`,
 		...salida(),
 		...(sesion ? ['--resume', sesion] : []),
+	];
+}
+
+/** Investigar fuera para una reunión: solo la web. Ni conexiones, ni archivos, ni escribir: lo que lea en una página no puede sacar nada. */
+export function argsInvestigacion({ prompt, modelo = CONFIG.MODELO_A_FONDO }) {
+	return [
+		'-p', prompt, '--model', modelo,
+		'--setting-sources', 'project',
+		'--strict-mcp-config',
+		'--settings', JSON.stringify({ autoMemoryEnabled: false, permissions: { deny: [...denegarLectura('general'), ...denegarEscritura()] } }),
+		'--tools', 'WebSearch,WebFetch',
+		'--allowedTools', 'WebSearch', 'WebFetch',
+		'--disallowedTools', 'Bash', 'Write', 'Edit', 'Read', 'Grep', 'Glob', 'NotebookEdit', 'SendMessage', 'Agent', 'Task',
+		'--no-session-persistence',
+		...salida(),
 	];
 }

@@ -77,7 +77,7 @@ const aprendizaje = () => new Promise(res => {
 const voz = crearVoz();
 const escribeSala = (h, t, o) => salas.escribir(h, t, o);
 
-const fundador = crearFundador({ db, acme: CONFIG.EMPRESA, home: CONFIG.HOME, conPuerta: !CONFIG.SIMULACION });
+const fundador = crearFundador({ db, acme: CONFIG.EMPRESA, home: CONFIG.HOME, conPuerta: !CONFIG.SIMULACION && process.platform === 'darwin' });
 const avisaTrabajo = a => avisoCorreo.manda({ ...a, trabajo: true }).catch(e => log('aviso:', e.message));
 tareas = crearTareas({ db, bus, salud, avisa, mcpConfig, escribeSala, alAvisar: avisaTrabajo, pluginsUsuario, fundador, leccionesDe: d => lecciones.bloque(d), alResultado: (t, texto) => {
 	const m = extraeMarcas(texto);

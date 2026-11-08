@@ -33,7 +33,7 @@ test('marcas: un destino inventado se ignora y no se cuela en el texto', () => {
 test('contesta y guarda la sesión del hilo', async () => {
 	const d = db();
 	const s = sala({ db: d, ejecutor: async () => ({ texto: 'Hecho', sesion: 'abc' }) });
-	s.escribir('fiscal', 'hola');
+	s.escribir('fiscal', 'hola', { deAlex: true });
 	await espera();
 	const m = d.q('SELECT * FROM mensajes ORDER BY id');
 	assert.equal(m[0].estado, 'hecho');
@@ -291,7 +291,7 @@ test('una sesión guardada que falla prueba con una nueva', async () => {
 	d.ajuste('sesion:fiscal', 'vieja');
 	const sesiones = [];
 	const s = sala({ db: d, ejecutor: async o => { const i = o.args.indexOf('--resume'); sesiones.push(i >= 0 ? o.args[i + 1] : null); if (i >= 0) throw new Error('no existe'); return { texto: 'ok', sesion: 'nueva' }; } });
-	s.escribir('fiscal', 'a');
+	s.escribir('fiscal', 'a', { deAlex: true });
 	await espera();
 	assert.deepEqual(sesiones, ['vieja', null]);
 	assert.equal(d.ajuste('sesion:fiscal'), 'nueva');

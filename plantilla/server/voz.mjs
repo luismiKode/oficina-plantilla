@@ -13,8 +13,8 @@ import { CONFIG } from './config.mjs';
 // Rutas fijas: con launchd el PATH no lleva Homebrew. El modelo se queda en los datos reales: no se pierde con cada obra.
 const NOMBRE_MODELO = 'ggml-large-v3-turbo-q5_0.bin';
 export const WHISPER = {
-	bin: process.env.OFICINA_WHISPER || '/opt/homebrew/bin/whisper-cli',
-	ffmpeg: process.env.OFICINA_FFMPEG || '/opt/homebrew/bin/ffmpeg',
+	bin: process.env.OFICINA_WHISPER || (process.platform === 'darwin' ? '/opt/homebrew/bin/whisper-cli' : 'whisper-cli'),
+	ffmpeg: process.env.OFICINA_FFMPEG || (process.platform === 'darwin' ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg'),
 	modelo: process.env.OFICINA_MODELO_WHISPER || path.join(CONFIG.HOME, '.oficina', 'modelos', NOMBRE_MODELO),
 	urlModelo: `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${NOMBRE_MODELO}`,
 	minimoModelo: 400 * 1024 * 1024,

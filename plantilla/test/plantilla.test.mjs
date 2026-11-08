@@ -15,6 +15,7 @@ import { validaFundacion, fundaDepartamento, crearFundador } from '../server/fun
 import { revisaInfra, arrancaInfra } from '../server/infra.mjs';
 import { fraseDe, crearTurno } from '../server/actividad.mjs';
 import { parteDeTere, promptPasada, pasada } from '../server/recepcion.mjs';
+import { argsInvestigacion } from '../server/perfiles.mjs';
 import { fueraDeLista, permitidas, argsSala, argsEncargo, argsCampanaAprobada, argsObra, puedeCampanas, HOOK_CAMPANA, HOOK_ESCRITURA } from '../server/perfiles.mjs';
 import { rechazoEscritura } from '../server/escritura.mjs';
 import { crearAvisoCorreo, TOPE_DIA } from '../server/avisame.mjs';
@@ -983,4 +984,25 @@ test('de ~/.claude se leen los resultados largos, y nada más', () => {
 	assert.ok(!d.includes(`Read(/${h}/*)`), 'una regla así deniega también las subcarpetas');
 	assert.ok(!d.includes(`Read(/${h}/**)`), 'no toda la carpeta');
 	assert.ok(d.includes(`Read(/${path.join(CONFIG.HOME, '.claude.json')})`));
+});
+
+test('el perfil de investigar solo tiene la web: ni archivos, ni conexiones, ni escribir', () => {
+	const a = argsInvestigacion({ prompt: 'x' });
+	assert.ok(a.includes('--strict-mcp-config'));
+	assert.equal(a[a.indexOf('--tools') + 1], 'WebSearch,WebFetch');
+	for (const h of ['Read', 'Write', 'Bash', 'Agent']) assert.ok(a.slice(a.indexOf('--disallowedTools')).includes(h), h);
+	assert.equal(fueraDeLista(['WebFetch', 'WebSearch'], 'general', 'investigacion').length, 0);
+	assert.equal(fueraDeLista(['Read', 'mcp__mi-erp__resumen'], 'general', 'investigacion').length, 2);
+});
+
+test('un recado no contamina la conversación de Alex: lo que él pide después se hace sin pedir el sí', async () => {
+	const encargos = [], si = [];
+	let n = 0;
+	const s = crearSalas({ db: db(), bus: new EventEmitter(), salud: { ok() {}, estado: () => ({}) }, obras: { encarga: x => encargos.push(x), enVivo: () => null }, tareas: { crea: x => { if (x.tipo === 'si') si.push(x); return 1; } }, ejecutor: async o => { n++; if (n === 1) o.alEvento({ tipo: 'herramienta', herramienta: 'mcp__claude_ai_Gmail__get_thread', entrada: {} }); return { texto: n === 1 ? 'Visto.' : '[[OBRA: arregla la reunión]]', sesion: `s${n}` }; } });
+	s.escribir('general:infra', 'Rafa propone algo', { de_sala: 'general:lean' });
+	await espera();
+	s.escribir('general:infra', 'Arregla la reunión', { deAlex: true });
+	await espera();
+	assert.equal(encargos.length, 1);
+	assert.equal(si.length, 0);
 });

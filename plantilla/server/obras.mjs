@@ -54,8 +54,11 @@ async function comprueba(dir, puerto, env) {
 export function reiniciaOficina(log = () => {}) {
 	log('Reinicio tras una obra');
 	if (!/com\.acme\.oficina/.test(process.env.XPC_SERVICE_NAME ?? '')) {
-		const s = fs.openSync(path.join(CONFIG.HOME, 'Library', 'Logs', 'oficina.log'), 'a');
-		spawn('/bin/sh', ['-c', `sleep 4; exec caffeinate -is "${NODE_BIN}" --no-warnings server/index.mjs`], { cwd: REPO, detached: true, stdio: ['ignore', s, s], env: process.env }).unref();
+		const mac = process.platform === 'darwin';
+		const dirLog = mac ? path.join(CONFIG.HOME, 'Library', 'Logs') : CONFIG.DATOS;
+		const s = fs.openSync(path.join(dirLog, 'oficina.log'), 'a');
+		// En el Mac, caffeinate para que no se duerma. En Linux o WSL no existe.
+		spawn('/bin/sh', ['-c', `sleep 4; exec ${mac ? 'caffeinate -is ' : ''}"${NODE_BIN}" --no-warnings server/index.mjs`], { cwd: REPO, detached: true, stdio: ['ignore', s, s], env: process.env }).unref();
 	}
 	setTimeout(() => process.exit(0), 300);
 }

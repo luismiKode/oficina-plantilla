@@ -96,6 +96,7 @@ function falso({ deck = DECK, revisiones = [{ aprobada: true, fallos: [], nota: 
 		const p = o.args[o.args.indexOf('-p') + 1];
 		const esquema = o.args.includes('--json-schema');
 		if (!esquema) {
+			if (/Vas a preparar una reunión/.test(p)) { log.push('investigacion'); return { texto: 'NADA' }; }
 			if (/ronda \d/.test(p) && /Estás en la mesa/.test(p)) { log.push('mesa'); return { texto: mesa(log.filter(x => x === 'mesa').length) }; }
 			log.push('aporte');
 			return { texto: 'Mi aporte con datos.' };
@@ -115,7 +116,7 @@ test('de principio a fin: aportes, mesa, redacción, revisión, lista y aviso', 
 	const r = crearReuniones({ db, salud: salud(), ejecutor: f, avisa: a => avisos.push(a), dirDatos: dir });
 	const id = r.convoca({ tema: 'Stock de Navidad', convoca: 'produccion', asistentes: ['finanzas', 'marketing:medios'] });
 	await espera(80);
-	assert.deepEqual(log, ['aporte', 'aporte', 'aporte', 'mesa', 'mesa', 'mesa', 'redaccion', 'revision']);
+	assert.deepEqual(log, ['investigacion', 'aporte', 'aporte', 'aporte', 'mesa', 'mesa', 'mesa', 'redaccion', 'revision']);
 	const x = r.obtiene(id);
 	assert.equal(x.estado, 'lista');
 	assert.equal(x.nota_revisora, 'Bien.');
@@ -459,4 +460,39 @@ test('lee la clave del fichero del Studio', () => {
 	assert.equal(leeClave(ruta), 'abc123');
 	assert.equal(leeClave(path.join(dir, 'no')), null);
 	if (antes) process.env.ELEVENLABS_API_KEY = antes;
+});
+
+test('lo que llega a Alex sin verificar no pasa, y si no la convocó él, no se le llama', async () => {
+	const { db, dir } = nuevo();
+	const incompleto = { ...DECK, para_alex: true, resumen: 'Precio de memoria, pendiente de verificar' };
+	const { f } = falso({ deck: incompleto });
+	const escritos = [];
+	const avisos = [];
+	const r = crearReuniones({ db, salud: salud(), ejecutor: f, dirDatos: dir, avisa: a => avisos.push(a), escribeSala: (h, t) => escritos.push([h, t]) });
+	const id = r.propone({ tema: 'Banco', convoca: 'general', asistentes: ['finanzas'] });
+	await espera(150);
+	const x = r.obtiene(id);
+	assert.equal(x.estado, 'resuelta');
+	assert.match(x.nota_revisora, /No ha llegado a Alex/);
+	assert.equal(avisos.length, 0, 'no se le llama');
+	assert.ok(escritos.some(([h, t]) => h === 'general' && /no está para Alex/.test(t)));
+	assert.equal(db.q(`SELECT * FROM interno WHERE reunion_id = ? AND tipo = 'investigacion'`, id).length, 1, 'antes, se ha investigado fuera');
+});
+
+test('la forma la arregla quien redacta: a Bea no le llega una presentación que se pasa de palabras', async () => {
+	const { db, dir } = nuevo();
+	const largo = { ...DECK, diapositivas: DECK.diapositivas.map(d => ({ ...d, titulo: 'una dos tres cuatro cinco seis siete ocho nueve diez once doce trece catorce quince dieciseis' })) };
+	let llamadas = 0;
+	const f = async o => {
+		const p = o.args[o.args.indexOf('-p') + 1];
+		if (!o.args.includes('--json-schema')) return { texto: /Estás en la mesa/.test(p) ? 'PASO' : 'Dato.' };
+		if (/se pasa de los límites/.test(p)) { llamadas++; return { estructurado: DECK }; }
+		if (/Presentación, versión/.test(p)) { assert.equal(validaDeck(JSON.parse(p.slice(p.indexOf('{'), p.lastIndexOf('}') + 1).split('\n\nLo hablado')[0])).length, 0); return { estructurado: { aprobada: true, fallos: [], nota: 'Bien.' } }; }
+		return { estructurado: largo };
+	};
+	const r = crearReuniones({ db, salud: salud(), ejecutor: f, dirDatos: dir });
+	const id = r.convoca({ tema: 'x', convoca: 'produccion', asistentes: ['finanzas'] });
+	await espera(150);
+	assert.equal(llamadas, 1);
+	assert.equal(r.obtiene(id).estado, 'lista');
 });

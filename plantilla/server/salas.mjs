@@ -209,7 +209,9 @@ export function crearSalas({ db, bus, salud, bin = CONFIG.CLAUDE_BIN, pluginsUsu
 				else turno.evento(ev);
 			},
 		});
-		const claveSesion = sesionClave(m.sala);
+		// Lo que no escribe Alex (recados, correos, avisos) va en otra conversación: si no, la suya se contamina
+		// y lo que él pida después acaba pidiéndole un sí. Julián tiene una sola: ve los tablones siempre.
+		const claveSesion = sesionClave(!m.de_alex && persona.nivel !== 'dg' ? `${m.sala}:ajena` : m.sala);
 		const sucia = `sesion_sucia:${claveSesion}`;
 		// Lo que entra en una sesión se queda en ella: si ya vio algo de fuera, sigue contando como contaminada.
 		// Julián y las direcciones, además, tienen delante los tablones, con títulos que pueden venir de un correo.
@@ -423,6 +425,7 @@ export function crearSalas({ db, bus, salud, bin = CONFIG.CLAUDE_BIN, pluginsUsu
 	const nuevaConversacion = hilo => {
 		db.ajuste(sesionClave(hilo), null);
 		db.ajuste(`sesion_sucia:${sesionClave(hilo)}`, null);
+		db.ajuste(sesionClave(`${hilo}:ajena`), null);
 		db.ajuste(`generacion:${hilo}`, String(Date.now()));
 	};
 	const trabajando = () => [...enCurso];

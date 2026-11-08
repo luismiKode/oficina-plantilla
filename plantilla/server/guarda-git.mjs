@@ -13,6 +13,9 @@ export function guardaEnGit(ruta, mensaje, log = () => {}) {
 	if (CONFIG.SIMULACION) return Promise.resolve(false);
 	const cwd = path.dirname(ruta), rel = path.basename(ruta);
 	cola = cola.then(async () => {
+		// Lo que el repo ignora, o lo que vive en otra carpeta enlazada sin repo, no se guarda: no es un fallo.
+		if (await git(cwd, 'check-ignore', '-q', '--', rel).then(() => true, () => false)) return false;
+		if (!(await git(cwd, 'rev-parse', '--is-inside-work-tree').then(() => true, () => false))) return false;
 		await git(cwd, 'add', '--', rel);
 		await git(cwd, 'commit', '-q', '-m', mensaje, '--', rel);
 		return true;

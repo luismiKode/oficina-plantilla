@@ -23,6 +23,25 @@ Para poner a trabajar la simulación: `node scripts/simular.mjs 4647` (un día) 
 
 Lo más cómodo es abrir Claude Code en esta carpeta y decirle: «Lee GUIA.md y adáptalo a mi trabajo».
 
+## En Windows
+
+Está hecha y probada en un Mac. En Windows no se ha probado nunca. Lo más sencillo es montarla dentro de WSL 2, con Ubuntu, que se comporta como un Linux:
+
+1. En PowerShell como administrador: `wsl --install -d Ubuntu`. Reinicia y crea tu usuario de Ubuntu.
+2. Dentro de Ubuntu: instala Node 24 (con nvm, por ejemplo), Git y Claude Code, y entra con `claude` para iniciar sesión.
+3. Copia la plantilla dentro de Ubuntu, en tu carpeta de usuario (`~/`), no en `C:\`: va mucho más rápido y los permisos de rutas funcionan como en el Mac.
+4. Sigue «Empezar en diez minutos» desde ahí.
+5. Tailscale, instalado en Windows: `tailscale serve` hacia `http://127.0.0.1:4647` llega a lo que corre en WSL.
+
+Lo que en Windows no hay o cambia:
+
+- **Arrancar sola y no dormirse:** en el Mac lo hacen `launchd` y `caffeinate`. En WSL, lánzala a mano o con una tarea programada de Windows que abra `wsl` y la arranque, y quita la suspensión del equipo mientras la uses.
+- **Notas de voz:** instala `ffmpeg` y `whisper.cpp` en Ubuntu, o indica dónde están con `OFICINA_FFMPEG` y `OFICINA_WHISPER`.
+- **Fundar un departamento:** crea la carpeta y lo apunta en el mapa, pero no la «puerta», que es una app del Mac.
+- **La app del iPhone y el iPad** abre la oficina por Tailscale igual que en el Mac. En Android, ábrela en el navegador.
+
+Si algo falla, abre Claude Code en la carpeta y dile qué ha pasado: el código está pensado para que lo adapte.
+
 ## El modelo
 
 **Una persona con la que hablas.** El director general recibe tus preocupaciones, las analiza, reparte y filtra lo que te llega. Todo lo que los equipos quieran pedirte pasa antes por él.
@@ -103,7 +122,7 @@ Lanza `scripts/auditar-permisos.mjs` y `scripts/probar-conexiones.mjs` antes de 
 
 ## Lo que no está probado
 
-En la plantilla no se ha probado la conexión real con correo o ERP tras limpiarla. En ninguna versión se han probado los audios, la voz narrada ni los avisos en un iPhone real, ni un cambio de campaña real. La versión original acaba de empezar a trabajar con datos reales: **es un prototipo, revisa antes de confiarle nada.**
+En la plantilla no se ha probado la conexión real con correo o ERP tras limpiarla, ni nada en Windows. En ninguna versión se han probado los audios, la voz narrada ni los avisos en un iPhone real, ni un cambio de campaña real. La versión original acaba de empezar a trabajar con datos reales: **es un prototipo, revisa antes de confiarle nada.**
 
 ## Adaptarla a tu trabajo
 
