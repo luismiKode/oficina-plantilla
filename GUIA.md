@@ -23,6 +23,24 @@ Para poner a trabajar la simulación: `node scripts/simular.mjs 4647` (un día) 
 
 Lo más cómodo es abrir Claude Code en esta carpeta y decirle: «Lee GUIA.md y adáptalo a mi trabajo».
 
+## Que la monte tu Claude
+
+La idea es que no la montes a mano: se la pides a Claude Code en tu ordenador y la monta él, leyendo esta guía.
+
+1. Instala Claude Code y entra con tu cuenta. En Windows, mejor dentro de WSL (mira «En Windows»).
+2. Descarga esta carpeta: `git clone https://github.com/luismiKode/oficina-plantilla`, y entra en ella.
+3. Abre Claude Code ahí (`claude`) y pégale esto:
+
+```
+Lee GUIA.md entera y monta esta oficina en este ordenador. Si es Windows, hazlo dentro de WSL con Ubuntu,
+siguiendo el apartado «En Windows». Empieza por la simulación con la empresa inventada y enséñamela
+funcionando antes de conectar nada real. Pregúntame lo que necesites de mi trabajo para adaptarla:
+departamentos, personas, carpetas y a quién le toca cada correo. No conectes mi correo ni nada real
+hasta que yo te lo diga, y antes pasa una revisión de seguridad como dice la guía.
+```
+
+4. Cuando la tengas en simulación y te guste, pídele que la adapte a tu trabajo y, al final, que la conecte.
+
 ## En Windows
 
 Está hecha y probada en un Mac. En Windows no se ha probado nunca. Lo más sencillo es montarla dentro de WSL 2, con Ubuntu, que se comporta como un Linux:
