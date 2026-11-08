@@ -28,7 +28,7 @@ Lo más cómodo es abrir Claude Code en esta carpeta y decirle: «Lee GUIA.md y 
 La idea es que no la montes a mano: se la pides a Claude Code en tu ordenador y la monta él, leyendo esta guía.
 
 1. Instala Claude Code y entra con tu cuenta. En Windows, mejor dentro de WSL (mira «En Windows»).
-2. Descarga esta carpeta: `git clone https://github.com/luismiKode/oficina-plantilla`, y entra en ella.
+2. Descarga esta carpeta con `git clone` y el enlace de este repositorio, y entra en ella.
 3. Abre Claude Code ahí (`claude`) y pégale esto:
 
 ```
